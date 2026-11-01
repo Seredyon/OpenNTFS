@@ -8,6 +8,15 @@
 
 Read and write NTFS files from a standalone app. OpenNTFS supports file and folder copying, renaming, folder creation, Quick Look, progress reporting and cancellation. No system driver or persistent service installation is required.
 
+## Screenshots
+
+<p align="center">
+  <img src=".github/screenshots/browser.png" width="820" alt="Browsing an NTFS drive in OpenNTFS">
+</p>
+<p align="center">
+  <img src=".github/screenshots/welcome.png" width="720" alt="OpenNTFS welcome screen">
+</p>
+
 ## Download and install
 
 1. Open this repository's **Releases** section.
