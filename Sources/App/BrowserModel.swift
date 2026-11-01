@@ -22,7 +22,12 @@ struct AlertItem: Identifiable {
     let message: String
 }
 
+/// Why the check sheet is shown.
+enum CheckReason { case manual, dirty, markedDuringWrite }
+
 enum SheetKind: Identifiable {
+    case check(Target, CheckReason)
+    case checkResult(Target, CheckReport)
     case newFolder
     case rename(Entry)
     case delete([Entry])
@@ -31,6 +36,8 @@ enum SheetKind: Identifiable {
     case repair([Entry]?)
     var id: String {
         switch self {
+        case .check(let t, _): return "check:" + t.id
+        case .checkResult(let t, let r): return "checkResult:" + t.id + ":" + r.id.uuidString
         case .newFolder: return "newFolder"
         case .rename(let e): return "rename:" + e.id
         case .delete(let list): return "delete:" + list.map(\.id).joined(separator: "|")
@@ -153,6 +160,10 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
                 self.context = nil
                 withAnimation(.easeInOut(duration: 0.22)) { self.activity = nil }
                 done(result)
+                if let t = self.target, VolumeAlerts.consume(t.id) {
+                    self.alert = nil
+                    self.sheet = .check(t, .markedDuringWrite)
+                }
                 if self.deviceRefreshPending { self.deviceRefreshPending = false; self.refreshDevices() }
             }
         }
@@ -166,6 +177,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
 
     func show(_ error: Error, title: String? = nil) {
         if error is CancelledFailure { showToast("xmark.circle", L("Cancelled")); return }
+        if error is VolumeNeedsCheck, let t = target { sheet = .check(t, .dirty); return }
         alert = AlertItem(title: title ?? L("The operation could not be completed"), message: error.localizedDescription)
     }
 
@@ -288,6 +300,34 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
                 self.closeBrowser(); self.targetID = nil
                 self.showToast("eject", L("“%@” can be safely disconnected.", t.name))
                 self.refreshDevices()
+            case .failure(let error): self.show(error)
+            }
+        }
+    }
+
+    /// Checks the volume with the engine's NTFS checker. `verify` changes nothing; `safe` clears the
+    /// "needs check" mark only if no errors are found; `repair` fixes the errors it finds.
+    func checkVolume(_ mode: CheckReport.Mode, target chosen: Target? = nil) {
+        guard let t = chosen ?? target, t.isNTFS, !busy else { return }
+        let title: String
+        switch mode {
+        case .verify: title = L("Checking “%@”…", t.name)
+        case .safe: title = L("Clearing the check mark on “%@”…", t.name)
+        case .repair: title = L("Repairing “%@”…", t.name)
+        }
+        // Keep macOS from mounting the volume while the checker works on it.
+        if !t.isImage { MountGuard.shared.protect(t.id) }
+        run(title, work: { ctx in
+            try Worker.check(t, mode: mode) { percent, stage in
+                ctx.report(L("Stage %@ · %@%%", String((stage ?? 0) + 1), String(percent)), Double(min(percent, 100)) / 100)
+            }
+        }) { result in
+            if !self.opened && !t.isImage { MountGuard.shared.release() }
+            switch result {
+            case .success(let report):
+                if mode != .verify && report.writable && self.opened && self.targetID == t.id { self.reload() }
+                // Let the previous sheet finish closing before the result appears.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.sheet = .checkResult(t, report) }
             case .failure(let error): self.show(error)
             }
         }

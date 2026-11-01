@@ -21,6 +21,36 @@ struct CancelledFailure: LocalizedError {
     var errorDescription: String? { L("The operation was cancelled.") }
 }
 
+/// Writing was refused because the volume is marked as needing a check (dirty or pending flags).
+struct VolumeNeedsCheck: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
+/// Volumes on which the NTFS engine itself set the dirty flag during an operation. The engine does
+/// that only when it detects an inconsistency, so the app offers a check afterwards.
+enum VolumeAlerts {
+    private static let lock = NSLock()
+    private static var marked = Set<String>()
+    static func mark(_ id: String) { lock.lock(); marked.insert(id); lock.unlock() }
+    static func consume(_ id: String) -> Bool { lock.lock(); defer { lock.unlock() }; return marked.remove(id) != nil }
+}
+
+/// Result of the engine's volume check (see runCheck in the worker).
+struct CheckReport: Identifiable {
+    enum Mode: String { case verify, safe, repair }
+    enum Outcome: String { case clean, minor, errors, repaired, journal, unsupported, unknown }
+    let id = UUID()
+    let mode: Mode
+    let outcome: Outcome
+    let dirtyBefore: Bool
+    let dirtyAfter: Bool
+    let writable: Bool
+    let flagsAfter: Int
+    let log: String
+    var noErrors: Bool { outcome == .clean || outcome == .minor || outcome == .journal }
+}
+
 struct CommandResult { let status: Int32; let output: Data; let error: Data }
 
 enum Runner {
@@ -325,7 +355,11 @@ enum Worker {
         guard let object = try? JSONSerialization.jsonObject(with: output) as? [String: Any] else {
             throw AppFailure(message: L("The NTFS module returned an invalid response."))
         }
+        if (object["volumeMarkedDirty"] as? Bool) == true { VolumeAlerts.mark(target.id) }
         if let error = object["error"] as? String {
+            if error.hasPrefix("NTFS is marked dirty") || error.contains("require further checking before writing") {
+                throw VolumeNeedsCheck(message: ErrorText.localize(error))
+            }
             let completed = (object["completed"] as? NSNumber)?.intValue
             let cancelled = error == "Operation cancelled" || error.contains("-128")
             if let completed = completed { throw BatchFailure(completed: completed, cancelled: cancelled, message: ErrorText.localize(error)) }
@@ -340,6 +374,19 @@ enum Worker {
     static func batch(_ target: Target, _ operations: [(String, [String])], progress: ((UInt64, Int?) -> Void)? = nil) throws {
         let ops: [[String: Any]] = operations.map { ["op": $0.0, "args": $0.1] }
         _ = try invoke("batch", target: target, arguments: [], operations: ops, progress: progress)
+    }
+
+    /// Runs the engine's NTFS checker. Progress reports the percentage of the current stage.
+    static func check(_ target: Target, mode: CheckReport.Mode, progress: ((UInt64, Int?) -> Void)? = nil) throws -> CheckReport {
+        let o = object(try invoke("check", target: target, arguments: [mode.rawValue], progress: progress))
+        guard o["ok"] as? Bool == true else { throw AppFailure(message: L("The NTFS module returned an invalid response.")) }
+        return CheckReport(mode: mode,
+                           outcome: CheckReport.Outcome(rawValue: o["result"] as? String ?? "") ?? .unknown,
+                           dirtyBefore: o["dirtyBefore"] as? Bool ?? false,
+                           dirtyAfter: o["dirtyAfter"] as? Bool ?? false,
+                           writable: o["writable"] as? Bool ?? false,
+                           flagsAfter: (o["flagsAfter"] as? NSNumber)?.intValue ?? 0,
+                           log: o["log"] as? String ?? "")
     }
 
     static func list(_ target: Target, _ path: String) throws -> [Entry] {

@@ -13,7 +13,7 @@ mkdir -p "$TMPDIR" "$CLANG_MODULE_CACHE_PATH"
 case "${1:-}" in ""|--quick) ;; *) echo "Usage: ./run_tests.sh [--quick]"; exit 2 ;; esac
 [ "$#" -le 1 ] || { echo "Usage: ./run_tests.sh [--quick]"; exit 2; }
 export XDG_CACHE_HOME="$OPENNTFS_BUILD/.cache"
-tests=(test_worker test_edges test_volume_flags test_target_state test_progress_cancel test_mixed_case test_batch)
+tests=(test_worker test_edges test_volume_flags test_target_state test_progress_cancel test_mixed_case test_batch test_check)
 [ "${1:-}" = "--quick" ] || tests+=(test_large_file)
 failed=0
 for t in "${tests[@]}"; do

@@ -176,6 +176,8 @@ struct AppCommands: Commands {
             Button(L("Refresh Drives")) { model.refreshDevices(userInitiated: true) }
                 .keyboardShortcut("r", modifiers: [.command, .option]).disabled(model.busy)
             Divider()
+            Button(L("Check Volume…")) { if let t = model.target { model.sheet = .check(t, .manual) } }
+                .disabled(model.target?.isNTFS != true || model.busy)
             Button(L("Repair Windows Access for Entire Volume…")) { model.sheet = .repair(nil) }.disabled(!model.canBrowse)
             Divider()
             Button(L("Format as NTFS…")) { if let t = model.target { model.sheet = .format(t) } }.disabled(model.target == nil || model.busy)
@@ -256,7 +258,7 @@ enum AboutPanel {
     static func showHelp() {
         let alert = NSAlert()
         alert.messageText = L("OpenNTFS Help")
-        alert.informativeText = L("• Select a drive in the sidebar and click “Open Volume”.\n• Double-click a folder to open it; double-click a file for actions.\n• Drag files from Finder into the window to copy them.\n• Space - Quick Look, Return - open, ⌘⌫ - delete, ⌘[ / ⌘] - back / forward.\n• “Show in Finder” gives the drive back to macOS (read-only in Finder); “Eject” (⌘E) prepares it for unplugging.\n• If Windows cannot open files written by an earlier build, use Volume › Repair Windows Access.")
+        alert.informativeText = L("• Select a drive in the sidebar and click “Open Volume”.\n• Double-click a folder to open it; double-click a file for actions.\n• Drag files from Finder into the window to copy them.\n• Space - Quick Look, Return - open, ⌘⌫ - delete, ⌘[ / ⌘] - back / forward.\n• “Show in Finder” gives the drive back to macOS (read-only in Finder); “Eject” (⌘E) prepares it for unplugging.\n• If Windows cannot open files written by an earlier build, use Volume › Repair Windows Access.\n• If writing is refused because the volume needs a check, use Volume › Check Volume.")
         alert.runModal()
     }
 }

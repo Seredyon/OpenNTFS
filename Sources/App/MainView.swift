@@ -110,6 +110,7 @@ struct TargetRow: View {
         .padding(.vertical, 3)
         .contextMenu {
             Button(L("Open Volume")) { model.choose(target.id); model.openVolume() }.disabled(!target.isNTFS)
+            Button(L("Check Volume…")) { model.choose(target.id); model.sheet = .check(target, .manual) }.disabled(!target.isNTFS || model.busy)
             if !target.isImage {
                 Button(L("Show in Finder")) { model.choose(target.id); model.mountInFinder() }
                 Button(L("Eject")) { model.choose(target.id); model.eject() }
@@ -252,13 +253,19 @@ struct VolumeOverview: View {
             .frame(maxWidth: 520, alignment: .leading)
             .padding(16)
             .background(RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.45)))
-            if !target.isImage {
-                HStack(spacing: 18) {
-                    Button(L("Show in Finder")) { model.mountInFinder() }.buttonStyle(.link)
-                    Button(L("Eject")) { model.eject() }.buttonStyle(.link)
+            HStack(spacing: 18) {
+                if target.isNTFS {
+                    Button(L("Check Volume")) { model.sheet = .check(target, .manual) }.buttonStyle(.link)
+                        .help(L("Look for NTFS errors without changing anything"))
                 }
-                .disabled(model.busy)
+                if !target.isImage {
+                    Button(L("Show in Finder")) { model.mountInFinder() }.buttonStyle(.link)
+                        .help(L("Give the drive back to macOS: Finder shows it read-only"))
+                    Button(L("Eject")) { model.eject() }.buttonStyle(.link)
+                        .help(L("Eject the whole drive so it can be unplugged"))
+                }
             }
+            .disabled(model.busy)
         }
         .padding(40)
         }
@@ -304,7 +311,10 @@ struct BrowserToolbar: ToolbarContent {
                     .help(L("More actions"))
             } else if let t = model.target {
                 Menu {
-                    if t.isNTFS { Button(L("Open Volume"), action: model.openVolume) }
+                    if t.isNTFS {
+                        Button(L("Open Volume"), action: model.openVolume)
+                        Button(L("Check Volume…")) { model.sheet = .check(t, .manual) }
+                    }
                     if !t.isImage { Button(L("Show in Finder"), action: model.mountInFinder); Button(L("Eject"), action: model.eject) }
                     Divider()
                     Button(L("Format as NTFS…"), role: .destructive) { model.sheet = .format(t) }
@@ -325,6 +335,7 @@ struct MoreMenuItems: View {
         Divider()
         Button(L("Repair Windows Access for Selection…")) { model.sheet = .repair(selected) }.disabled(selected.isEmpty || !model.canBrowse)
         Button(L("Repair Windows Access for Entire Volume…")) { model.sheet = .repair(nil) }.disabled(!model.canBrowse)
+        Button(L("Check Volume…")) { if let t = model.target { model.sheet = .check(t, .manual) } }.disabled(model.busy)
         Divider()
         Button(L("Refresh")) { model.reload() }.disabled(!model.canBrowse)
         if let t = model.target, !t.isImage {

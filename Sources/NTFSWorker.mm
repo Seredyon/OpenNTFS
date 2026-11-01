@@ -34,6 +34,7 @@ static void releaseCached(){if(cachedFD>=0)close(cachedFD);cachedFD=-1;cachedReg
 #include <string>
 #include <stdexcept>
 #include <initializer_list>
+#include <algorithm>
 using Status=uint32_t;
 static void check(Status s,const char *what){if(s){char b[200];snprintf(b,sizeof b,"%s: UFSD 0x%08x",what,s);throw std::runtime_error(b);}}
 static uint64_t u64(const uint8_t*p){uint64_t v;memcpy(&v,p,8);return v;}
@@ -416,6 +417,10 @@ static uint64_t opPut(Session&s,const char*local,NSString*remote){
  try{uint64_t n=s.transfer(local,temporary.UTF8String,true);s.flush();s.rename(temporary.UTF8String,remote.UTF8String);return n;}
  catch(...){try{s.remove(temporary.UTF8String,false);s.flush();}catch(...){}throw;}
 }
+// The engine sets the dirty flag itself only when it detects an inconsistency on the volume
+// (CFileSystemNtfs::MarkVolumeDirty; GetVolumeState then reports 1). Writing starts only on a clean
+// volume, so a dirty state after an operation means the engine found a problem during it.
+static bool engineMarkedDirty(Session&s){try{return s.volumeState()!=2;}catch(...){return false;}}
 static void json(id object){NSData*d=[NSJSONSerialization dataWithJSONObject:object options:(streaming?0:NSJSONWritingPrettyPrinted) error:nil];fwrite(d.bytes,1,d.length,stdout);fputc('\n',stdout);fflush(stdout);}
 static int legacyMain(int argc,char**argv){@autoreleasepool{
  try{
@@ -438,17 +443,18 @@ static int legacyMain(int argc,char**argv){@autoreleasepool{
   bool mutating=cmd=="put"||cmd=="mkdir"||cmd=="rename"||cmd=="remove"||cmd=="rmdir"||cmd=="fixsec";
   if(mutating){Session probe(e);probe.open(argv[3],true);probe.requireWritableState();for(NSDictionary*entry in probe.list("/"))if([entry[@"name"] caseInsensitiveCompare:@"hiberfil.sys"]==NSOrderedSame)throw std::runtime_error("Windows hibernation file detected. Disable hibernation and cleanly shut down Windows before writing");}
   Session s(e);s.open(argv[3],!mutating);
+  auto done=[&](NSDictionary*d){if(mutating&&engineMarkedDirty(s)){NSMutableDictionary*m=[d mutableCopy];m[@"volumeMarkedDirty"]=@YES;d=m;}json(d);};
   if(cmd=="health"){json(@{@"flags":@(volumeFlags),@"flagsHex":[NSString stringWithFormat:@"0x%04x",volumeFlags],@"engineState":@(s.volumeState()),@"journalRecoveryNeeded":@(s.journalRecoveryNeeded()),@"readOnlyCheck":@YES});}
   else if(cmd=="ls"){s.verifyPath([NSString stringWithUTF8String:argv[4]],true,true);json(@{@"entries":s.list(argv[4])});}
   else if(cmd=="put"||cmd=="get"){
    if(argc!=6)throw std::runtime_error("transfer requires local path and NTFS path");
    NSString*remote=[NSString stringWithUTF8String:argv[5]];uint64_t n=0;
    if(cmd=="put"){n=opPut(s,argv[4],remote);s.flush();}else n=opGet(s,argv[4],remote);
-   json(@{@"ok":@YES,@"bytes":@(n)});
-  }else if(cmd=="mkdir"&&argc==5){opMkdir(s,[NSString stringWithUTF8String:argv[4]]);s.flush();json(@{@"ok":@YES});}
-  else if(cmd=="rename"&&argc==6){opRename(s,[NSString stringWithUTF8String:argv[4]],[NSString stringWithUTF8String:argv[5]]);s.flush();json(@{@"ok":@YES});}
-  else if(cmd=="fixsec"&&argc==5){NSString*path=[NSString stringWithUTF8String:argv[4]];if([path isEqual:@"/"])throw std::runtime_error("The root directory is protected");NSDictionary*item=s.entry(path);s.verifyPath(path,true,[item[@"directory"] boolValue]);unsigned checked=0,fixed=0;auto templates=s.engineTemplates();try{s.repairSecurity(path,templates,checked,fixed);}catch(...){s.flush();throw;}s.flush();json(@{@"ok":@YES,@"checked":@(checked),@"fixed":@(fixed)});}
-  else if((cmd=="remove"||cmd=="rmdir")&&argc==5){opRemove(s,[NSString stringWithUTF8String:argv[4]],cmd=="rmdir");s.flush();json(@{@"ok":@YES});}
+   done(@{@"ok":@YES,@"bytes":@(n)});
+  }else if(cmd=="mkdir"&&argc==5){opMkdir(s,[NSString stringWithUTF8String:argv[4]]);s.flush();done(@{@"ok":@YES});}
+  else if(cmd=="rename"&&argc==6){opRename(s,[NSString stringWithUTF8String:argv[4]],[NSString stringWithUTF8String:argv[5]]);s.flush();done(@{@"ok":@YES});}
+  else if(cmd=="fixsec"&&argc==5){NSString*path=[NSString stringWithUTF8String:argv[4]];if([path isEqual:@"/"])throw std::runtime_error("The root directory is protected");NSDictionary*item=s.entry(path);s.verifyPath(path,true,[item[@"directory"] boolValue]);unsigned checked=0,fixed=0;auto templates=s.engineTemplates();try{s.repairSecurity(path,templates,checked,fixed);}catch(...){s.flush();throw;}s.flush();done(@{@"ok":@YES,@"checked":@(checked),@"fixed":@(fixed)});}
+  else if((cmd=="remove"||cmd=="rmdir")&&argc==5){opRemove(s,[NSString stringWithUTF8String:argv[4]],cmd=="rmdir");s.flush();done(@{@"ok":@YES});}
   else throw std::runtime_error("Unknown command or arguments");
   return 0;
  }catch(const std::exception&e){json(@{@"error":[NSString stringWithUTF8String:e.what()]});return 1;}
@@ -464,7 +470,7 @@ static void requireWritableVolume(Engine&e,const char*image){
  for(NSDictionary*entry in probe.list("/"))if([entry[@"name"] caseInsensitiveCompare:@"hiberfil.sys"]==NSOrderedSame)throw std::runtime_error("Windows hibernation file detected. Disable hibernation and cleanly shut down Windows before writing");
 }
 static int runBatch(const char*enginePathC,const char*image,NSArray*operations,bool mutating){
- NSUInteger completed=0;uint64_t bytes=0;
+ NSUInteger completed=0;uint64_t bytes=0;bool markedDirty=false;
  try{
   Engine e(enginePathC);
   if(mutating)requireWritableVolume(e,image);
@@ -509,11 +515,13 @@ static int runBatch(const char*enginePathC,const char*image,NSArray*operations,b
   }catch(...){
    (void)firstPending;
    rollback();
+   if(mutating)markedDirty=engineMarkedDirty(s);
    throw;
   }
+  if(mutating)markedDirty=engineMarkedDirty(s);
   progressItem=-1;progressBase=0;
-  json(@{@"ok":@YES,@"completed":@(completed),@"bytes":@(bytes)});return 0;
- }catch(const std::exception&ex){progressItem=-1;progressBase=0;json(@{@"error":[NSString stringWithUTF8String:ex.what()],@"completed":@(completed)});return 1;}
+  json(@{@"ok":@YES,@"completed":@(completed),@"bytes":@(bytes),@"volumeMarkedDirty":@(markedDirty)});return 0;
+ }catch(const std::exception&ex){progressItem=-1;progressBase=0;json(@{@"error":[NSString stringWithUTF8String:ex.what()],@"completed":@(completed),@"volumeMarkedDirty":@(markedDirty)});return 1;}
 }
 static NSDictionary*runDiskutil(NSArray<NSString*>*args){
  NSTask*t=[NSTask new];t.executableURL=[NSURL fileURLWithPath:@"/usr/sbin/diskutil"];t.arguments=args;
@@ -609,6 +617,87 @@ static NSString*enginePath(){
  unsigned char h[CC_SHA256_DIGEST_LENGTH];CC_SHA256(bytes.bytes,(CC_LONG)bytes.length,h);char hex[65];for(int i=0;i<32;i++)snprintf(hex+i*2,3,"%02x",h[i]);
  if(strcmp(hex,EXPECTED_ENGINE_SHA256))throw std::runtime_error("NTFS engine integrity check failed");return path;
 }
+// ---- Volume check: the engine's own chkntfs (UFSD::CheckFs, the code behind Paragon's First Aid) ----
+// Modes: "verify" uses a read-only device object, so the checker cannot write at all (the device's
+// WriteBytes refuses). "safe" (chkntfs -f --safe) repairs nothing and only clears the dirty flag
+// when no errors are found. "repair" (chkntfs -f) fixes the errors it finds.
+// ABI, verified against CHKNTFS::main 0x1000008f0 and CCheckNtfs's constructor: OptCheck is
+// {u64 flags (1 show minors, 2 no orphans, 4 safe, 8 short), u64 memory limit, u64 0}; fixing is
+// enabled by a writable device. CHKDSK_INFO is 0x90 bytes: status u32 @0, total clusters @0x10,
+// free clusters @0x18, cluster size @0x20. Status: 0 OK, 2 errors not fixed, 3 repaired,
+// 4 minor errors, 6 OK but journal not replayed (read-only), 7 unsupported features.
+struct CheckLog{std::string text,digits;int percent=-1;bool afterProgress=false;};
+// The message service prints progress as "NN%" with no newline on a non-terminal, glued to the
+// surrounding messages and often one character per write. Progress runs are reported as stages
+// (a run that follows a message starts a new stage) and kept out of the log.
+static void checkLogFlushDigits(CheckLog*log){if(log->text.size()<256*1024)log->text+=log->digits;log->digits.clear();}
+static int checkLogWrite(void*cookie,const char*buffer,int length){
+ auto*log=static_cast<CheckLog*>(cookie);
+ for(int i=0;i<length;i++){
+  char c=buffer[i];
+  bool boundary=log->afterProgress||log->text.empty()||log->text.back()=='\n';
+  if(c>='0'&&c<='9'&&(boundary||!log->digits.empty())&&log->digits.size()<3){log->digits.push_back(c);continue;}
+  if(c=='%'&&!log->digits.empty()){
+   int value=std::min(atoi(log->digits.c_str()),100);log->digits.clear();
+   bool stage=!log->afterProgress;if(stage){progressItem++;log->percent=-1;}
+   if(value!=log->percent){log->percent=value;reportProgress((uint64_t)value,stage||value==100);}
+   log->afterProgress=true;continue;
+  }
+  if(c==' '&&log->afterProgress&&log->digits.empty())continue;
+  if(!log->digits.empty())checkLogFlushDigits(log);
+  if(c=='\r')continue;
+  log->afterProgress=false;
+  if(log->text.size()<256*1024)log->text.push_back(c);
+ }
+ return length;
+}
+static int runCheck(const char*enginePathC,const char*image,NSString*mode){
+ try{
+  bool verify=[mode isEqual:@"verify"],safe=[mode isEqual:@"safe"];
+  Engine e(enginePathC);
+  uint16_t flagsBefore=volumeFlags;bool hibernated=false;
+  if(!verify){
+   // Repairing a hibernated Windows volume destroys the hibernated session (and its unsaved data).
+   try{Session probe(e);probe.open(image,true);for(NSDictionary*entry in probe.list("/"))if([entry[@"name"] caseInsensitiveCompare:@"hiberfil.sys"]==NSOrderedSame)hibernated=true;}catch(...){}
+   if(hibernated)throw std::runtime_error("Windows hibernation file detected. Disable hibernation and cleanly shut down Windows before writing");
+  }
+  e.fn<void*(*)()>(0x10000878c)();
+  void*mm=e.fn<void*(*)()>(0x10000878c)();void*sm=e.fn<void*(*)()>(0x100009644)();void*tm=e.fn<void*(*)()>(0x100007a80)();
+  void*io=ioFromAuthorizedDescriptor(e,verify,image);
+  struct IoGuard{Engine&e;void*p;~IoGuard(){e.fn<void(*)(void*)>(0x100008668)(p);}}ioGuard{e,io};
+  CheckLog log;FILE*out=funopen(&log,nullptr,checkLogWrite,nullptr,nullptr);if(!out)throw std::runtime_error("Cannot start the volume check");
+  using MessageFn=void*(*)(FILE*,void*,bool);
+  // The message service's first call installs a SIGINT handler whose "break" makes the checker ask
+  // a yes/no question on stdin, which is this worker's request pipe. Keep our own SIGINT action so
+  // that question can never be asked.
+  struct sigaction previous{};sigaction(SIGINT,nullptr,&previous);
+  void*message=e.fn<MessageFn>(0x100008ebc)(out,nullptr,false);
+  sigaction(SIGINT,&previous,nullptr);
+  struct OutGuard{Engine&e;FILE*f;~OutGuard(){e.fn<MessageFn>(0x100008ebc)(nullptr,nullptr,true);fclose(f);}}outGuard{e,out};
+  alignas(16) uint64_t options[3]={safe?4ULL:0ULL,0,0};alignas(16) uint8_t info[0x100]{};
+  using CheckFn=Status(*)(unsigned long,void*,void*,void*,void*,void*,void*,const void*,const char*,void*);
+  progressItem=-1;progressBase=0;
+  struct StageGuard{~StageGuard(){progressItem=-1;}}stageGuard;
+  Status status=e.fn<CheckFn>(0x100015d18)(2,mm,sm,io,tm,message,nullptr,options,"NTFS",info);
+  // Whatever the checker wrote must reach the medium, also when it stopped with an error.
+  if(!verify)syncDevice(resourceFD);
+  fflush(out);
+  if(!log.digits.empty())checkLogFlushDigits(&log);
+  if(status){char b[200];snprintf(b,sizeof b,"check NTFS: UFSD 0x%08x",status);throw std::runtime_error(b);}
+  uint32_t result=u32(info);uint64_t clusters=u64(info+0x10),freeClusters=u64(info+0x18),clusterSize=u64(info+0x20);
+  uint16_t flagsAfter=flagsBefore;bool stateKnown=false;
+  {uint8_t boot[512];if(pread(resourceFD,boot,512,0)==512){try{flagsAfter=readNTFSVolumeFlags(resourceFD,boot);stateKnown=true;}catch(...){}}}
+  NSString*name=@"unknown";
+  switch(result){case 0:name=@"clean";break;case 2:name=@"errors";break;case 3:name=@"repaired";break;case 4:name=@"minor";break;case 6:name=@"journal";break;case 7:name=@"unsupported";break;default:break;}
+  NSString*text=[[NSString alloc]initWithBytes:log.text.data() length:log.text.size() encoding:NSUTF8StringEncoding]?:[[NSString alloc]initWithBytes:log.text.data() length:log.text.size() encoding:NSISOLatin1StringEncoding]?:@"";
+  json(@{@"ok":@YES,@"mode":mode,@"result":name,@"status":@(result),
+         @"flagsBefore":@(flagsBefore),@"flagsAfter":@(flagsAfter),@"flagsKnown":@(stateKnown),
+         @"dirtyBefore":@((flagsBefore&1)!=0),@"dirtyAfter":@((flagsAfter&1)!=0),
+         @"writable":@(stateKnown&&(flagsAfter&~0x0080U)==0),
+         @"totalBytes":@(clusters*clusterSize),@"freeBytes":@(freeClusters*clusterSize),@"log":text});
+  return 0;
+ }catch(const std::exception&ex){json(@{@"error":[NSString stringWithUTF8String:ex.what()]});return 1;}
+}
 static int processRequest(NSData*data,const char*executable){@autoreleasepool{
  try{
   // Per-request metadata must not leak from a previous USB target into an image.
@@ -618,7 +707,7 @@ static int processRequest(NSData*data,const char*executable){@autoreleasepool{
   if(![object isKindOfClass:NSDictionary.class])throw std::runtime_error("Invalid request");
   NSDictionary*r=object;NSString*action=r[@"action"];NSDictionary*t=r[@"target"];NSArray*args=r[@"arguments"]?:@[];
   progressEnabled=streaming&&[r[@"progress"] isEqual:@YES];
-  NSDictionary*counts=@{@"ls":@1,@"put":@2,@"get":@2,@"mkdir":@1,@"rename":@2,@"remove":@1,@"rmdir":@1,@"format":@1,@"inspect":@0,@"release":@0,@"health":@0,@"fixsec":@1,@"batch":@0};
+  NSDictionary*counts=@{@"ls":@1,@"put":@2,@"get":@2,@"mkdir":@1,@"rename":@2,@"remove":@1,@"rmdir":@1,@"format":@1,@"inspect":@0,@"release":@0,@"health":@0,@"fixsec":@1,@"batch":@0,@"check":@1};
   if(![action isKindOfClass:NSString.class]||!counts[action]||![args isKindOfClass:NSArray.class]||args.count!=[counts[action] unsignedIntegerValue]||![t isKindOfClass:NSDictionary.class])throw std::runtime_error("Invalid operation");
   for(id arg in args)if(![arg isKindOfClass:NSString.class]||[(NSString*)arg length]>4096||[(NSString*)arg rangeOfString:[NSString stringWithFormat:@"%C",(unichar)0]].location!=NSNotFound)throw std::runtime_error("Invalid operation argument");
   if([action isEqual:@"release"]){releaseCached();json(@{@"ok":@YES});return 0;}
@@ -633,7 +722,9 @@ static int processRequest(NSData*data,const char*executable){@autoreleasepool{
     if(![o[@"op"] isEqual:@"get"])batchMutating=true;
    }
   }
-  NSString*engine=enginePath();bool mutating=operations?batchMutating:![@[@"ls",@"get",@"health"] containsObject:action];bool formatting=[action isEqualToString:@"format"];
+  bool checking=[action isEqualToString:@"check"];NSString*checkMode=checking?args[0]:nil;
+  if(checking&&![@[@"verify",@"safe",@"repair"] containsObject:checkMode])throw std::runtime_error("Invalid operation");
+  NSString*engine=enginePath();bool mutating=operations?batchMutating:checking?![checkMode isEqual:@"verify"]:![@[@"ls",@"get",@"health"] containsObject:action];bool formatting=[action isEqualToString:@"format"];
   NSString*path=nil;bool volume=[t[@"kind"] isEqual:@"volume"];
   if([action isEqual:@"inspect"]){if(!volume)throw std::runtime_error("Inspect requires a USB partition");NSDictionary*d=validateVolume(t,false);json(@{@"ok":@YES,@"device":d[@"DeviceIdentifier"]});return 0;}
   if(volume){
@@ -660,9 +751,10 @@ static int processRequest(NSData*data,const char*executable){@autoreleasepool{
   if(volume&&!same(mediaRegistryID(t[@"device"]),t[@"registryID"]))throw std::runtime_error("USB partition changed while opening");
   if(flock(resourceFD,LOCK_EX|LOCK_NB))throw std::runtime_error("Image is in use by another process");
   if(!volume&&after.st_size<16*1024*1024)throw std::runtime_error("Image is too small");
-  if(!formatting){uint8_t boot[512];if(pread(resourceFD,boot,512,0)!=512||memcmp(boot+3,"NTFS    ",8)||boot[510]!=0x55||boot[511]!=0xaa)throw std::runtime_error("The selected target does not contain an NTFS filesystem");volumeFlags=readNTFSVolumeFlags(resourceFD,boot);if(mutating)requireCleanNTFS(volumeFlags);}
+  if(!formatting){uint8_t boot[512];if(pread(resourceFD,boot,512,0)!=512||memcmp(boot+3,"NTFS    ",8)||boot[510]!=0x55||boot[511]!=0xaa)throw std::runtime_error("The selected target does not contain an NTFS filesystem");volumeFlags=readNTFSVolumeFlags(resourceFD,boot);if(mutating&&!checking)requireCleanNTFS(volumeFlags);}
   if(formatting){NSString*label=args[0];if(!label.length||label.length>32||[label rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location!=NSNotFound)throw std::runtime_error("Volume name must contain 1-32 characters");}
   std::string fdpath="/dev/fd/"+std::to_string(resourceFD);
+  if(checking)return runCheck(engine.UTF8String,fdpath.c_str(),checkMode);
   if(operations)return runBatch(engine.UTF8String,fdpath.c_str(),operations,mutating);
   std::vector<std::string>strings={executable,engine.UTF8String,action.UTF8String,fdpath};
   for(NSString*a in args)strings.push_back(a.UTF8String);

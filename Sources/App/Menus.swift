@@ -100,6 +100,8 @@ struct SheetHost: View {
         case .info(let e): InfoSheet(model: model, entry: e)
         case .format(let t): FormatSheet(model: model, target: t)
         case .repair(let list): RepairSheet(model: model, entries: list)
+        case .check(let t, let reason): CheckSheet(model: model, target: t, reason: reason)
+        case .checkResult(let t, let report): CheckResultSheet(model: model, target: t, report: report)
         }
     }
 }
@@ -276,6 +278,162 @@ struct RepairSheet: View {
         } buttons: {
             Button(L("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
             Button(L("Repair")) { dismiss(); model.repairWindowsAccess(entries) }.keyboardShortcut(.defaultAction)
+        }
+    }
+}
+
+// MARK: - Volume check
+
+struct Callout: View {
+    let symbol: String
+    let tint: Color
+    let text: String
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol).foregroundStyle(tint)
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.12)))
+    }
+}
+
+struct CheckSheet: View {
+    @ObservedObject var model: BrowserModel
+    let target: Target
+    let reason: CheckReason
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        SheetFrame(symbol: "stethoscope", tint: reason == .manual ? .accentColor : .orange, title: L("Check “%@”", target.name)) {
+            switch reason {
+            case .dirty:
+                Callout(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                        text: L("This volume is marked as needing a check, so OpenNTFS does not write to it. You can still open and read it."))
+                Text(L("Windows and other NTFS drivers set this mark when a drive is unplugged without ejecting, when the computer loses power or shuts down abruptly, or when a problem is detected."))
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            case .markedDuringWrite:
+                Callout(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                        text: L("While writing, the NTFS engine found an inconsistency on this volume and marked it as needing a check. OpenNTFS will not write to it until it has been checked."))
+            case .manual:
+                EmptyView()
+            }
+            Text(L("The check reads the NTFS structures of the whole volume and does not change anything on the drive. It uses the checker built into the NTFS engine. Large drives can take several minutes."))
+                .fixedSize(horizontal: false, vertical: true)
+        } buttons: {
+            Button(L("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
+            Button(L("Check")) { dismiss(); model.checkVolume(.verify, target: target) }.keyboardShortcut(.defaultAction)
+        }
+    }
+}
+
+struct CheckResultSheet: View {
+    @ObservedObject var model: BrowserModel
+    let target: Target
+    let report: CheckReport
+    @State private var confirmRepair = false
+    @State private var showReport = false
+    @Environment(\.dismiss) private var dismiss
+
+    private enum Look { case good, attention, bad }
+
+    private var offerClear: Bool { report.mode == .verify && report.noErrors && !report.writable }
+    private var offerRepair: Bool { report.outcome == .errors }
+
+    private var look: Look {
+        if report.outcome == .errors || report.outcome == .unsupported || report.outcome == .unknown { return .bad }
+        return report.writable ? .good : .attention
+    }
+
+    private var title: String {
+        switch report.outcome {
+        case .errors: return L("Errors were found")
+        case .repaired: return L("Volume repaired")
+        case .unsupported: return L("The volume cannot be checked")
+        case .unknown: return L("Check finished")
+        case .clean, .minor, .journal:
+            if report.mode != .verify && report.writable { return L("Ready for writing") }
+            return report.outcome == .journal ? L("Unfinished changes in the journal") : L("No errors found")
+        }
+    }
+
+    private var message: String {
+        let name = target.name
+        switch report.outcome {
+        case .errors:
+            if report.mode == .safe { return L("The check found errors on “%@”, so the mark was kept and nothing was changed.", name) }
+            if report.mode == .repair { return L("Some errors on “%@” could not be repaired. Connect the drive to a Windows PC and run chkdsk X: /f (X is the drive letter).", name) }
+            return L("The checker found damaged NTFS structures on “%@” (see the report). The most reliable fix is chkdsk on Windows: connect the drive and run chkdsk X: /f (X is the drive letter). You can also repair the volume here.", name)
+        case .repaired:
+            return report.writable ? L("The NTFS engine repaired the errors it found. You can write to “%@” again.", name)
+                                   : L("The NTFS engine repaired the errors it found, but the volume is still marked. Check it on Windows with chkdsk.")
+        case .unsupported:
+            return L("This volume uses NTFS features the checker does not support. Check it on Windows with chkdsk.")
+        case .unknown:
+            return L("The checker finished with an unexpected result. See the report.")
+        case .clean, .minor, .journal:
+            switch report.mode {
+            case .verify:
+                if report.writable {
+                    return report.outcome == .minor ? L("The NTFS structures of “%@” are consistent. The checker noted minor issues that need no repair.", name)
+                                                    : L("The NTFS structures of “%@” are consistent.", name)
+                }
+                if report.outcome == .journal {
+                    return L("The NTFS journal contains changes that Windows did not finish. OpenNTFS can complete them, as Windows would on its next start, and clear the mark if the volume is then free of errors.")
+                }
+                return L("The volume is only marked as needing a check. To allow writing, OpenNTFS checks it once more and clears the mark only if there are still no errors. Nothing else is changed.")
+            case .safe, .repair:
+                return report.writable ? L("No errors were found and the mark was cleared. You can write to “%@” again.", name)
+                                       : L("No errors were found, but the mark could not be cleared. Check the drive on Windows with chkdsk.")
+            }
+        }
+    }
+
+    var body: some View {
+        SheetFrame(symbol: look == .good ? "checkmark.seal.fill" : look == .attention ? "exclamationmark.triangle.fill" : "xmark.octagon.fill",
+                   tint: look == .good ? .green : look == .attention ? .orange : .red, title: title) {
+            Text(message).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            if confirmRepair {
+                Callout(symbol: "exclamationmark.triangle.fill", tint: .red,
+                        text: L("Repair rewrites NTFS metadata. Damaged entries can be removed and lost files are moved into a recovery folder. Back up important files first, for example with Save to Mac."))
+            }
+            if !report.log.isEmpty {
+                DisclosureGroup(L("Checker report"), isExpanded: $showReport) {
+                    ScrollView {
+                        Text(report.log.trimmingCharacters(in: .whitespacesAndNewlines))
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(height: 180)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5)))
+                    HStack {
+                        Spacer()
+                        Button(L("Copy Report")) {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(report.log, forType: .string)
+                        }
+                        .buttonStyle(.link)
+                    }
+                }
+                .font(.callout)
+            }
+        } buttons: {
+            if confirmRepair {
+                Button(L("Cancel")) { confirmRepair = false }.keyboardShortcut(.cancelAction)
+                Button(L("Repair Volume"), role: .destructive) { dismiss(); model.checkVolume(.repair, target: target) }
+                    .buttonStyle(.borderedProminent).tint(.red)
+            } else if offerClear {
+                Button(L("Done")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L("Clear Mark")) { dismiss(); model.checkVolume(.safe, target: target) }.keyboardShortcut(.defaultAction)
+            } else if offerRepair && report.mode != .repair {
+                Button(L("Done")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L("Repair…"), role: .destructive) { withAnimation { confirmRepair = true } }
+            } else {
+                Button(L("Done")) { dismiss() }.keyboardShortcut(.defaultAction)
+            }
         }
     }
 }
