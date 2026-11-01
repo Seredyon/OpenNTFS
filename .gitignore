@@ -1,0 +1,25 @@
+# Build products and test fixtures
+/build/
+/dist/
+/.cache/
+/Sources/EngineHash.h
+*.app/
+*.dmg
+*.dmg.sha256
+*.ntfs
+*.log
+
+# Python and macOS
+__pycache__/
+*.py[cod]
+.DS_Store
+._*
+
+# Local configuration and signing credentials
+.env
+.env.*
+*.p12
+*.p8
+*.mobileprovision
+.vscode/
+.idea/

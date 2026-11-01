@@ -1,0 +1,2 @@
+"CFBundleDisplayName" = "OpenNTFS";
+"NSRemovableVolumesUsageDescription" = "OpenNTFS needs access to the selected USB drive to read and write NTFS.";

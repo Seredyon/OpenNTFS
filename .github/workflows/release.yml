@@ -1,0 +1,99 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and test Apple silicon DMG
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Check version and release tag
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,re
+          version=Path('VERSION').read_text().strip()
+          if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',version):
+              raise SystemExit('Invalid VERSION; use X.Y.Z.')
+          if os.environ['REF_TYPE']=='tag' and os.environ['REF_NAME']!='v'+version:
+              raise SystemExit('The tag must match VERSION exactly.')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as output:
+              output.write('version='+version+'\n')
+          PY
+      - name: Check repository contents
+        run: python3 scripts/check_repository.py
+      - name: Build app and DMG
+        run: bash build.sh
+      - name: Run image tests
+        run: bash run_tests.sh --quick
+      - name: Verify installer
+        run: python3 scripts/verify_dmg.py "build/OpenNTFS-$(cat VERSION)-arm64.dmg"
+      - name: Upload installer and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: OpenNTFS-${{ steps.version.outputs.version }}-arm64
+          path: |
+            build/*.dmg
+            build/*.dmg.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/validation/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish:
+    name: Publish versioned download
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: OpenNTFS-${{ needs.build.outputs.version }}-arm64
+          path: dist
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/publish_release.sh
