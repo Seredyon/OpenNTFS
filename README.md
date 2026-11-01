@@ -33,5 +33,3 @@ shasum -a 256 -c OpenNTFS-0.3.0-arm64.dmg.sha256
 This is an experimental build. Keep a backup of valuable data. Internal and APFS partitions are protected from writes. Writing is blocked when the volume has its dirty bit set, has unsupported NTFS flags or contains a Windows hibernation file. Existing files are not overwritten. Links, reparse points and EFS file export are not supported.
 
 To uninstall, quit the app and delete `OpenNTFS.app`. Language and interface preferences are stored using standard macOS preferences.
-
-Includes a proprietary Paragon Software module from NTFS for Mac 18.0.24; public redistribution rights have not been established in the project materials.
