@@ -370,3 +370,8 @@
 "Volume repaired" = "Том исправлен";
 "While writing, the NTFS engine found an inconsistency on this volume and marked it as needing a check. OpenNTFS will not write to it until it has been checked." = "Во время записи движок NTFS обнаружил несоответствие на этом томе и пометил его как требующий проверки. OpenNTFS не будет записывать на него, пока том не проверен.";
 "Windows and other NTFS drivers set this mark when a drive is unplugged without ejecting, when the computer loses power or shuts down abruptly, or when a problem is detected." = "Windows и другие драйверы NTFS ставят эту отметку, если накопитель отключили без извлечения, если пропало питание или компьютер выключился аварийно, а также при обнаружении проблемы.";
+"Check Only" = "Только проверить";
+"Check and Clear Mark" = "Проверить и снять отметку";
+"Check and Clear Mark reads the whole volume once and removes the mark only if no errors are found. It repairs nothing; if there are errors, the volume stays as it is. Large drives can take several minutes." = "«Проверить и снять отметку» читает весь том один раз и снимает отметку, только если ошибок нет. Ничего не исправляется: если ошибки есть, том остаётся как был. На больших дисках это может занять несколько минут.";
+"Unexpected device interface ABI" = "Неожиданный интерфейс устройства в движке NTFS";
+"read volume space" = "чтение свободного места тома";

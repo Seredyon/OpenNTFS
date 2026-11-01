@@ -319,11 +319,21 @@ struct CheckSheet: View {
             case .manual:
                 EmptyView()
             }
-            Text(L("The check reads the NTFS structures of the whole volume and does not change anything on the drive. It uses the checker built into the NTFS engine. Large drives can take several minutes."))
-                .fixedSize(horizontal: false, vertical: true)
+            if reason == .manual {
+                Text(L("The check reads the NTFS structures of the whole volume and does not change anything on the drive. It uses the checker built into the NTFS engine. Large drives can take several minutes."))
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(L("Check and Clear Mark reads the whole volume once and removes the mark only if no errors are found. It repairs nothing; if there are errors, the volume stays as it is. Large drives can take several minutes."))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         } buttons: {
             Button(L("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
-            Button(L("Check")) { dismiss(); model.checkVolume(.verify, target: target) }.keyboardShortcut(.defaultAction)
+            if reason == .manual {
+                Button(L("Check")) { dismiss(); model.checkVolume(.verify, target: target) }.keyboardShortcut(.defaultAction)
+            } else {
+                Button(L("Check Only")) { dismiss(); model.checkVolume(.verify, target: target) }
+                Button(L("Check and Clear Mark")) { dismiss(); model.checkVolume(.safe, target: target) }.keyboardShortcut(.defaultAction)
+            }
         }
     }
 }

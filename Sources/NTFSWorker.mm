@@ -35,6 +35,9 @@ static void releaseCached(){if(cachedFD>=0)close(cachedFD);cachedFD=-1;cachedReg
 #include <stdexcept>
 #include <initializer_list>
 #include <algorithm>
+#include <list>
+#include <unordered_map>
+#include <sys/sysctl.h>
 using Status=uint32_t;
 static void check(Status s,const char *what){if(s){char b[200];snprintf(b,sizeof b,"%s: UFSD 0x%08x",what,s);throw std::runtime_error(b);}}
 static uint64_t u64(const uint8_t*p){uint64_t v;memcpy(&v,p,8);return v;}
@@ -221,6 +224,26 @@ class Session{
    if(fs&&!upcase)check(e.fn<Status(*)(void*)>(0x100042760)(fs),"load upcase");}
  }
  void*ctxPtr(){return ctx;}
+ // Free and total space from CUFSD::GetVolumeInfo (0x100015664, forwarded to
+ // CFileSystemNtfs::GetVolumeInfo): free clusters (CWndBitmap::GetZeros), total clusters and the
+ // cluster size. Only meaningful in a writable session: the light read-only initialisation does
+ // not count the bitmap and reports every cluster as free.
+ struct Space{uint64_t freeClusters=0,totalClusters=0,clusterSize=0;uint64_t freeBytes()const{return freeClusters*clusterSize;}};
+ Space space(){
+  uint64_t freeClusters=0,totalClusters=0;unsigned long clusterSize=0,serialLength=0,sectorSize=0;uint8_t serial[8]{};uint16_t label[64]{};unsigned state=0;
+  using InfoFn=Status(*)(void*,uint64_t*,uint64_t*,unsigned long*,void*,unsigned long,unsigned long*,uint8_t,void*,unsigned long,unsigned*,unsigned long*);
+  check(e.fn<InfoFn>(0x100015664)(ctx,&freeClusters,&totalClusters,&clusterSize,serial,sizeof serial,&serialLength,0,label,64,&state,&sectorSize),"read volume space");
+  Space result;result.freeClusters=freeClusters;result.totalClusters=totalClusters;result.clusterSize=clusterSize;return result;
+ }
+ // A write that runs out of space leaves the clusters the engine had already allocated marked as
+ // used after the partial file is removed (verified with the checker: "Free clusters ... marked as
+ // used"). Refuse files that cannot fit before the engine allocates anything; the margin covers
+ // the MFT record, index growth and security data.
+ void requireSpace(uint64_t bytes){
+  Space v=space();if(!v.clusterSize||v.freeClusters>v.totalClusters)return;
+  uint64_t needed=(bytes+v.clusterSize-1)/v.clusterSize*v.clusterSize+256*1024+bytes/256;
+  if(needed>v.freeBytes())throw std::runtime_error("There is not enough free space on the NTFS volume.");
+ }
  unsigned volumeState(){unsigned state=0;check(e.fn<Status(*)(void*,unsigned*)>(0x100015694)(ctx,&state),"read volume state");return state;}
  bool journalRecoveryNeeded(){return (initializationFlags&0x10000000UL)!=0;}
  void requireWritableState(){
@@ -349,6 +372,7 @@ class Session{
   if(fd<0)throw std::runtime_error(strerror(savedErrno));
   struct stat localInfo{};if(fstat(fd,&localInfo)||!S_ISREG(localInfo.st_mode)){close(fd);throw std::runtime_error("Local transfer target must be a regular file");}
   struct Fd{int n;~Fd(){close(n);}}guard{fd};
+  if(writing)requireSpace((uint64_t)localInfo.st_size);
   // An export creates its local file exclusively (O_EXCL), so a failed or cancelled export
   // removes only the partial file it created itself.
   try{
@@ -489,6 +513,8 @@ static int runBatch(const char*enginePathC,const char*image,NSArray*operations,b
   };
   try{
    NSUInteger sinceFlush=0;
+   // Refuse a batch whose files cannot fit before anything is copied (each file is checked again).
+   if(mutating){uint64_t total=0;for(NSDictionary*o in operations)if([o[@"op"] isEqual:@"put"]){struct stat st{};if(!stat([o[@"args"][0] UTF8String],&st)&&S_ISREG(st.st_mode))total+=(uint64_t)st.st_size;}if(total)s.requireSpace(total);}
    for(NSUInteger i=0;i<operations.count;i++){
     throwIfCancelled();progressItem=(long)i;progressBase=bytes;
     NSDictionary*o=operations[i];NSString*op=o[@"op"];NSArray*a=o[@"args"];
@@ -626,6 +652,72 @@ static NSString*enginePath(){
 // enabled by a writable device. CHKDSK_INFO is 0x90 bytes: status u32 @0, total clusters @0x10,
 // free clusters @0x18, cluster size @0x20. Status: 0 OK, 2 errors not fixed, 3 repaired,
 // 4 minor errors, 6 OK but journal not replayed (read-only), 7 unsupported features.
+// ---- Read cache for the volume check ------------------------------------------------------
+// The checker's folder stage looks up MFT records and index blocks all over the volume. On a
+// spinning USB disk every lookup is a seek and the kernel's block-device cache is far too small
+// to keep the MFT, so a 1 TB disk took hours. The engine's plain reads are served here from
+// 256 KiB chunks, each read from the device once (sequential stages read ahead for free),
+// bounded to a quarter of physical memory and at most 4 GiB. Unusual reads (special flags,
+// out of range, failed device) go to the engine's own routine unchanged. Writes (safe and repair
+// modes) go to the device first and then update the cached copies.
+namespace readcache {
+ constexpr uint64_t chunkSize=256*1024;
+ using ReadFn=Status(*)(void*,const uint64_t&,void*,unsigned long,unsigned);
+ using WriteFn=Status(*)(void*,const uint64_t&,const void*,unsigned long,unsigned);
+ struct Chunk{uint64_t start;std::vector<uint8_t>data;};
+ static std::list<Chunk>lru;static std::unordered_map<uint64_t,std::list<Chunk>::iterator>chunks;
+ static uint64_t budget=0,used=0,hits=0,misses=0,bypassed=0;
+ static ReadFn baseRead=nullptr;static WriteFn baseWrite=nullptr;static void*virtuals[12];
+ static void clear(){lru.clear();chunks.clear();used=hits=misses=bypassed=0;}
+ static int fdOf(void*io){int fd;memcpy(&fd,static_cast<uint8_t*>(io)+8,4);return fd;}
+ static uint64_t sizeOf(void*io){uint64_t n;memcpy(&n,static_cast<uint8_t*>(io)+0x18,8);return n;}
+ static bool gone(void*io){return static_cast<uint8_t*>(io)[0x12]&1;}
+ // Returns the cached chunk starting at `start`, reading it if needed; nullptr on any failure.
+ static Chunk*load(void*io,uint64_t start){
+  auto found=chunks.find(start);
+  if(found!=chunks.end()){lru.splice(lru.begin(),lru,found->second);hits++;return &*found->second;}
+  uint64_t length=std::min<uint64_t>(chunkSize,sizeOf(io)-start);
+  std::vector<uint8_t>data(length);uint64_t done=0;
+  while(done<length){ssize_t n=pread(fdOf(io),data.data()+done,length-done,(off_t)(start+done));if(n<=0)return nullptr;done+=(uint64_t)n;}
+  while(used+length>budget&&!lru.empty()){used-=lru.back().data.size();chunks.erase(lru.back().start);lru.pop_back();}
+  lru.push_front({start,std::move(data)});chunks[start]=lru.begin();used+=length;misses++;
+  return &lru.front();
+ }
+ static Status read(void*io,const uint64_t&offset,void*buffer,unsigned long count,unsigned flags){
+  uint64_t size=sizeOf(io);
+  if((flags&0x60000000U)||gone(io)||!count||offset>size||count>size-offset){bypassed++;return baseRead(io,offset,buffer,count,flags);}
+  uint8_t*out=static_cast<uint8_t*>(buffer);uint64_t position=offset,left=count;
+  while(left){
+   uint64_t start=position/chunkSize*chunkSize;Chunk*c=load(io,start);
+   if(!c){bypassed++;return baseRead(io,offset,buffer,count,flags);}
+   uint64_t within=position-start,n=std::min<uint64_t>(left,c->data.size()-within);
+   if(!n){bypassed++;return baseRead(io,offset,buffer,count,flags);}
+   memcpy(out,c->data.data()+within,n);out+=n;position+=n;left-=n;
+  }
+  return 0;
+ }
+ static Status write(void*io,const uint64_t&offset,const void*buffer,unsigned long count,unsigned flags){
+  Status status=baseWrite(io,offset,buffer,count,flags);
+  uint64_t first=offset/chunkSize*chunkSize,end=offset+count;
+  for(uint64_t start=first;start<end;start+=chunkSize){
+   auto found=chunks.find(start);if(found==chunks.end())continue;
+   if(status){used-=found->second->data.size();lru.erase(found->second);chunks.erase(found);continue;}
+   auto&data=found->second->data;uint64_t from=std::max(offset,start),to=std::min(end,start+data.size());
+   if(from<to)memcpy(data.data()+(from-start),static_cast<const uint8_t*>(buffer)+(from-offset),to-from);
+  }
+  return status;
+ }
+ // Installs the cache into the next device object the worker creates.
+ static void install(Engine&e){
+  auto**table=e.fn<void**>(0x100068708);
+  if(table[4]!=e.fn<void*>(0x100008058)||table[5]!=e.fn<void*>(0x100008318))throw std::runtime_error("Unexpected device interface ABI");
+  memcpy(virtuals,table,sizeof virtuals);
+  baseRead=reinterpret_cast<ReadFn>(table[4]);baseWrite=reinterpret_cast<WriteFn>(table[5]);
+  virtuals[4]=reinterpret_cast<void*>(read);virtuals[5]=reinterpret_cast<void*>(write);
+  uint64_t memory=0;size_t length=sizeof memory;if(sysctlbyname("hw.memsize",&memory,&length,nullptr,0))memory=8ULL<<30;
+  budget=std::min<uint64_t>(memory/4,4ULL<<30);clear();ioVtableOverride=virtuals;
+ }
+}
 struct CheckLog{std::string text,digits;int percent=-1;bool afterProgress=false;};
 // The message service prints progress as "NN%" with no newline on a non-terminal, glued to the
 // surrounding messages and often one character per write. Progress runs are reported as stages
@@ -663,8 +755,14 @@ static int runCheck(const char*enginePathC,const char*image,NSString*mode){
   }
   e.fn<void*(*)()>(0x10000878c)();
   void*mm=e.fn<void*(*)()>(0x10000878c)();void*sm=e.fn<void*(*)()>(0x100009644)();void*tm=e.fn<void*(*)()>(0x100007a80)();
-  void*io=ioFromAuthorizedDescriptor(e,verify,image);
-  struct IoGuard{Engine&e;void*p;~IoGuard(){e.fn<void(*)(void*)>(0x100008668)(p);}}ioGuard{e,io};
+  // All modes use the read cache (writes go to the device first, then update cached copies);
+  // the tests compare results, reports and resulting images with and without it.
+  bool cached=!getenv("OPENNTFS_CHECK_NO_CACHE");
+  if(cached)readcache::install(e);
+  void*io=nullptr;
+  try{io=ioFromAuthorizedDescriptor(e,verify,image);}catch(...){ioVtableOverride=nullptr;throw;}
+  ioVtableOverride=nullptr;
+  struct IoGuard{Engine&e;void*p;~IoGuard(){e.fn<void(*)(void*)>(0x100008668)(p);readcache::clear();}}ioGuard{e,io};
   CheckLog log;FILE*out=funopen(&log,nullptr,checkLogWrite,nullptr,nullptr);if(!out)throw std::runtime_error("Cannot start the volume check");
   using MessageFn=void*(*)(FILE*,void*,bool);
   // The message service's first call installs a SIGINT handler whose "break" makes the checker ask
@@ -694,7 +792,8 @@ static int runCheck(const char*enginePathC,const char*image,NSString*mode){
          @"flagsBefore":@(flagsBefore),@"flagsAfter":@(flagsAfter),@"flagsKnown":@(stateKnown),
          @"dirtyBefore":@((flagsBefore&1)!=0),@"dirtyAfter":@((flagsAfter&1)!=0),
          @"writable":@(stateKnown&&(flagsAfter&~0x0080U)==0),
-         @"totalBytes":@(clusters*clusterSize),@"freeBytes":@(freeClusters*clusterSize),@"log":text});
+         @"totalBytes":@(clusters*clusterSize),@"freeBytes":@(freeClusters*clusterSize),@"log":text,
+         @"cache":@{@"enabled":@(cached),@"hits":@(readcache::hits),@"deviceReads":@(readcache::misses),@"bypassed":@(readcache::bypassed),@"bytes":@(readcache::used)}});
   return 0;
  }catch(const std::exception&ex){json(@{@"error":[NSString stringWithUTF8String:ex.what()]});return 1;}
 }

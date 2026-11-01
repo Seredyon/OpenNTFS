@@ -33,6 +33,9 @@ try:
         app=workspace/'OpenNTFS.app'
         assert (workspace/'Applications').is_symlink()
         assert os.readlink(workspace/'Applications')=='/Applications'
+        layout=(workspace/'.DS_Store').read_bytes()
+        assert layout[4:8]==b'Bud1' and b'icvp' in layout and b'Iloc' in layout,'Installer window layout missing'
+        assert (workspace/'.background/background.tiff').is_file(),'Installer background missing'
     info=plistlib.loads((app/'Contents/Info.plist').read_bytes())
     assert info['CFBundleShortVersionString']==(root/'VERSION').read_text().strip()
     subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True)
@@ -45,4 +48,4 @@ try:
 finally:
     if attached:subprocess.run(['hdiutil','detach',str(workspace),'-quiet'],check=True)
     shutil.rmtree(workspace)
-print('PASS: DMG checksum, signed app, full payload and Applications shortcut')
+print('PASS: DMG checksum, signed app, full payload, Applications shortcut'+('' if args.extract else ' and window layout'))
