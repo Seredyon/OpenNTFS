@@ -127,7 +127,7 @@ def main():
     }
     view = {
         'viewOptionsVersion': 1, 'backgroundType': 2, 'backgroundImageAlias': alias(mount, volume_name, BACKGROUND),
-        'backgroundColorRed': 0.08, 'backgroundColorGreen': 0.10, 'backgroundColorBlue': 0.13,
+        'backgroundColorRed': 0.93, 'backgroundColorGreen': 0.89, 'backgroundColorBlue': 0.82,
         'arrangeBy': 'none', 'gridOffsetX': 0.0, 'gridOffsetY': 0.0, 'gridSpacing': 100.0,
         'iconSize': float(ICON_SIZE), 'textSize': float(TEXT_SIZE), 'labelOnBottom': True,
         'showIconPreview': False, 'showItemInfo': False, 'scrollPositionX': 0.0, 'scrollPositionY': 0.0,
