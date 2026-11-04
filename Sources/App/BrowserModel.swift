@@ -140,8 +140,20 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
     /// Used and total size once the volume was opened here; a closed volume can only show its size.
     func capacityText(_ t: Target) -> String {
         guard let free = freeSpace[t.spaceKey] else { return t.sizeText }
-        return L("%@ of %@", ByteCountFormatter.string(fromByteCount: max(0, t.size - free), countStyle: .file), t.sizeText)
+        return L("%@ of %@", byteText(max(0, t.size - free)), t.sizeText)
     }
+
+    func usedFraction(_ t: Target) -> Double? {
+        guard let free = freeSpace[t.spaceKey], t.size > 0 else { return nil }
+        return min(1, max(0, Double(t.size - free) / Double(t.size)))
+    }
+
+    func usageDetail(_ t: Target) -> String {
+        guard let free = freeSpace[t.spaceKey] else { return t.sizeText }
+        return L("%@ used, %@ free", byteText(max(0, t.size - free)), byteText(free))
+    }
+
+    private func byteText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
 
     private struct PreviewCopy { let size: UInt64; let modified: UInt64; let url: URL }
     private var previewCopies: [String: PreviewCopy] = [:]

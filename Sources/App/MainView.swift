@@ -87,6 +87,36 @@ private extension View {
     }
 }
 
+/// The accent color would vanish on a selected sidebar row; this lighter blue keeps it visible.
+private let selectedRowBlue = Color(red: 0.55, green: 0.85, blue: 1)
+
+/// Used share of a volume, as Finder and storage settings show it. A selected sidebar row has an
+/// accent background, so the bar uses brighter versions of the same colors there.
+struct CapacityBar: View {
+    let fraction: Double
+    var onAccent = false
+    var height: CGFloat = 5
+
+    private var fill: Color {
+        if fraction >= 0.95 { return onAccent ? Color(red: 1, green: 0.42, blue: 0.4) : .red }
+        if fraction >= 0.85 { return onAccent ? Color(red: 1, green: 0.72, blue: 0.25) : .orange }
+        return onAccent ? selectedRowBlue : .accentColor
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(onAccent ? Color.black.opacity(0.38) : Color.primary.opacity(0.13))
+                Capsule()
+                    .fill(LinearGradient(colors: [fill.opacity(0.78), fill], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(height, proxy.size.width * fraction))
+            }
+        }
+        .frame(height: height)
+        .animation(.easeInOut(duration: 0.3), value: fraction)
+    }
+}
+
 struct TargetRow: View {
     @ObservedObject var model: BrowserModel
     let target: Target
@@ -95,10 +125,13 @@ struct TargetRow: View {
         HStack(spacing: 10) {
             Image(systemName: target.symbol)
                 .font(.system(size: 18))
-                .foregroundStyle(target.isNTFS ? Color.accentColor : Color.orange)
+                .foregroundStyle(target.isNTFS ? (model.targetID == target.id ? selectedRowBlue : Color.accentColor) : Color.orange)
                 .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(target.name).lineLimit(1)
+                if let used = model.usedFraction(target) {
+                    CapacityBar(fraction: used, onAccent: model.targetID == target.id).help(model.usageDetail(target))
+                }
                 Text(target.isImage ? model.capacityText(target) : target.fileSystemText + " · " + model.capacityText(target))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -228,6 +261,12 @@ struct VolumeOverview: View {
             VStack(spacing: 6) {
                 Text(target.name).font(.title.weight(.semibold))
                 Text(target.detail).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+            if let used = model.usedFraction(target) {
+                VStack(spacing: 7) {
+                    CapacityBar(fraction: used, height: 8).frame(width: 280)
+                    Text(model.usageDetail(target)).font(.callout).foregroundStyle(.secondary)
+                }
             }
             if target.isNTFS {
                 Button { model.openVolume() } label: {
@@ -532,6 +571,9 @@ struct StatusBar: View {
             Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
             if let t = model.target {
+                if let used = model.usedFraction(t) {
+                    CapacityBar(fraction: used).frame(width: 72).help(model.usageDetail(t))
+                }
                 Label(t.isImage ? L("Disk image") + " · " + model.capacityText(t) : t.id + " · " + t.fileSystemText + " · " + model.capacityText(t),
                       systemImage: t.isImage ? "opticaldiscdrive" : "externaldrive")
                     .labelStyle(.titleAndIcon).font(.caption).foregroundStyle(.secondary).lineLimit(1)
