@@ -135,6 +135,9 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
     private var toastTask: DispatchWorkItem?
 
     var target: Target? { targets.first { $0.id == targetID } }
+    private struct PreviewCopy { let size: UInt64; let modified: UInt64; let url: URL }
+    private var previewCopies: [String: PreviewCopy] = [:]
+
     var busy: Bool { activity != nil }
     var canBrowse: Bool { opened && target != nil && !busy }
     var selectedEntries: [Entry] { entries.filter { selection.contains($0.id) } }
@@ -231,6 +234,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
     }
 
     private func closeBrowser() {
+        discardPreviewCopies()
         MountGuard.shared.release()
         opened = false; entries = []; visible = []; selection = []; path = "/"; search = ""
         backStack = []; forwardStack = []
@@ -558,10 +562,36 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
         }
     }
 
+    /// A file is copied once: the copy is reused until the file changes or the volume is closed.
     func quickLook(_ files: [Entry]) {
+        guard let t = target else { return }
         let list = files.filter(\.isRegularFile)
-        guard !list.isEmpty, let dir = try? TempFiles.newDirectory() else { return }
-        export(list, to: dir, reveal: false) { urls in PreviewController.shared.show(urls) }
+        let key = { (entry: Entry) in "\(t.id)|\(entry.id)" }
+        let copy = { (entry: Entry) -> URL? in
+            guard let saved = self.previewCopies[key(entry)], saved.size == entry.size, saved.modified == entry.modifiedNTFS,
+                  FileManager.default.fileExists(atPath: saved.url.path) else { return nil }
+            return saved.url
+        }
+        let missing = list.filter { copy($0) == nil }
+        guard !missing.isEmpty else { PreviewController.shared.show(list.compactMap(copy)); return }
+        guard let dir = try? TempFiles.newDirectory() else { return }
+        export(missing, to: dir, reveal: false) { urls in
+            for (entry, url) in zip(missing, urls) {
+                if let stale = self.previewCopies[key(entry)] {
+                    try? FileManager.default.removeItem(at: stale.url)
+                    _ = rmdir(stale.url.deletingLastPathComponent().path)   // fails while other copies share it
+                }
+                self.previewCopies[key(entry)] = PreviewCopy(size: entry.size, modified: entry.modifiedNTFS, url: url)
+            }
+            PreviewController.shared.show(list.compactMap(copy))
+        }
+    }
+
+    private func discardPreviewCopies() {
+        guard !previewCopies.isEmpty else { return }
+        PreviewController.shared.close()
+        Set(previewCopies.values.map { $0.url.deletingLastPathComponent() }).forEach { try? FileManager.default.removeItem(at: $0) }
+        previewCopies = [:]
     }
 
     func toggleQuickLook() {

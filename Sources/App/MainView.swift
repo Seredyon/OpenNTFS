@@ -396,25 +396,44 @@ struct BrowserView: View {
 struct PathBar: View {
     @ObservedObject var model: BrowserModel
 
+    // Crumbs must stay outside a ScrollView: on macOS it takes their clicks. Long names shorten,
+    // and deep paths fold the middle into one crumb that opens the last hidden folder.
+    private let lastShown = 4
+
     var body: some View {
         let parts = NTFSPath.components(model.path)
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                crumb(title: model.target?.name ?? "/", symbol: model.target?.isImage == true ? "opticaldiscdrive" : "externaldrive", path: "/", current: parts.isEmpty)
-                ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
-                    Image(systemName: "chevron.compact.right").foregroundStyle(.tertiary).font(.system(size: 13))
-                    crumb(title: part, symbol: "folder", path: "/" + parts[0...index].joined(separator: "/"), current: index == parts.count - 1)
-                }
+        let hidden = max(0, parts.count - lastShown)
+        HStack(spacing: 2) {
+            crumb(title: model.target?.name ?? "/", symbol: model.target?.isImage == true ? "opticaldiscdrive" : "externaldrive", path: "/", current: parts.isEmpty)
+            if hidden > 0 {
+                separator
+                crumb(title: "…", symbol: "folder", path: "/" + parts[0..<hidden].joined(separator: "/"), current: false)
             }
-            .padding(.horizontal, 10).padding(.vertical, 5)
+            ForEach(Array(parts.enumerated().dropFirst(hidden)), id: \.offset) { index, part in
+                separator
+                crumb(title: part, symbol: "folder", path: "/" + parts[0...index].joined(separator: "/"), current: index == parts.count - 1)
+                    .layoutPriority(index == parts.count - 1 ? 1 : 0)
+            }
         }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
+    }
+
+    private var separator: some View {
+        Image(systemName: "chevron.compact.right").foregroundStyle(.tertiary).font(.system(size: 13))
+    }
+
+    /// One long name must not push the other folders out of the bar; the tooltip keeps the full path.
+    private func short(_ name: String) -> String {
+        name.count <= 36 ? name : name.prefix(24) + "…" + name.suffix(11)
     }
 
     private func crumb(title: String, symbol: String, path: String, current: Bool) -> some View {
         Button { if !current { model.go(to: path) } } label: {
-            Label(title, systemImage: symbol)
+            Label(short(title), systemImage: symbol)
                 .labelStyle(.titleAndIcon)
+                .lineLimit(1).truncationMode(.middle)
                 .font(.callout.weight(current ? .semibold : .regular))
                 .foregroundStyle(current ? .primary : .secondary)
                 .padding(.horizontal, 7).padding(.vertical, 3)
