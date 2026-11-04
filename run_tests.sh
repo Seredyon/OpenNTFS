@@ -20,8 +20,18 @@ for t in "${tests[@]}"; do
   printf '%-22s ' "$t"
   if python3 "$SOURCE_DIR/tests/$t.py" > "$OPENNTFS_BUILD/validation/$t.log" 2>&1; then echo PASS; else echo "FAIL (see build/validation/$t.log)"; failed=1; fi
 done
-printf '%-22s ' "sec_inherit_test"
-if xcrun clang++ -std=c++17 -fobjc-arc -O1 -arch arm64 -mmacosx-version-min=13.0 -fmodules-cache-path="$CLANG_MODULE_CACHE_PATH" -Wno-unused-function -I"$OPENNTFS_BUILD/generated" \
-     "$SOURCE_DIR/tests/sec_inherit_test.mm" -framework Foundation -framework IOKit -o "$OPENNTFS_BUILD/.cache/sec_inherit_test" \
-   && "$OPENNTFS_BUILD/.cache/sec_inherit_test" | tail -1 | grep -q OK; then echo PASS; else echo FAIL; failed=1; fi
+printf '%-22s ' "security_inherit"
+if xcrun swiftc -swift-version 5 -O -parse-as-library -target arm64-apple-macosx13.0 -module-cache-path "$CLANG_MODULE_CACHE_PATH" \
+     "$SOURCE_DIR/Sources/NTFS/"*.swift "$SOURCE_DIR/tests/SecurityInheritTests.swift" -o "$OPENNTFS_BUILD/.cache/security_inherit" \
+   && "$OPENNTFS_BUILD/.cache/security_inherit" | tail -1 | grep -q OK; then echo PASS; else echo FAIL; failed=1; fi
+# The NTFS implementation on its own, through its command-line tool. test_write and test_reference
+# need a separate NTFS implementation (OPENNTFS_REFERENCE_WORKER) and skip without one.
+NTFS_TOOL="$OPENNTFS_BUILD/.cache/ntfs-tool"
+printf '%-22s ' "ntfs_tool"
+if xcrun swiftc -swift-version 5 -O -parse-as-library -target arm64-apple-macosx13.0 -module-cache-path "$CLANG_MODULE_CACHE_PATH" \
+     "$SOURCE_DIR/Sources/NTFS/"*.swift "$SOURCE_DIR/Sources/NTFSTool/Main.swift" -o "$NTFS_TOOL"; then echo PASS; else echo FAIL; failed=1; fi
+for t in test_native test_compressed test_native_check test_write test_reference; do
+  printf '%-22s ' "$t"
+  if python3 "$SOURCE_DIR/tests/ntfs/$t.py" "$NTFS_TOOL" "$OPENNTFS_BUILD/test-images/ntfs" > "$OPENNTFS_BUILD/validation/$t.log" 2>&1; then echo PASS; else echo "FAIL (see build/validation/$t.log)"; failed=1; fi
+done
 exit $failed

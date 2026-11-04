@@ -1,15 +1,12 @@
 """Regression: USB partition geometry must not carry into a later image request."""
 from pathlib import Path
-import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent)); from paths import BUILD_PATH, APP_PATH, IMAGES_PATH, REPORTS_PATH, SOURCE_PATH
+import sys as _sys; _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent)); from paths import APP_PATH, IMAGES_PATH, REPORTS_PATH, SOURCE_PATH
 import json, os, struct, subprocess, tempfile
 root = Path(__file__).resolve().parents[1]
 source = SOURCE_PATH/'Sources/NTFSWorker.mm'
-engine = APP_PATH/'Contents/Frameworks/NTFSEngine.bundle'
 with tempfile.TemporaryDirectory(prefix='target-state-', dir=IMAGES_PATH) as directory:
     run = Path(directory)
     macos = run/'Contents/MacOS'; macos.mkdir(parents=True)
-    frameworks = run/'Contents/Frameworks'; frameworks.mkdir()
-    (frameworks/'NTFSEngine.bundle').symlink_to(engine)
     harness = run/'state_test.mm'
     harness.write_text('#define main productionMain\n#include '+json.dumps(str(source))+'\n#undef main\n' + '''
 int main(int argc, char**argv){
@@ -24,9 +21,11 @@ int main(int argc, char**argv){
 }
 ''')
     worker = macos/'StateTest'
-    subprocess.run(['xcrun','clang++','-std=c++17','-fobjc-arc','-O2','-arch','arm64',
-                    '-mmacosx-version-min=13.0','-I'+str(BUILD_PATH/'generated'),'-fmodules-cache-path='+os.environ['CLANG_MODULE_CACHE_PATH'],
-                    str(harness),'-framework','Foundation','-framework','IOKit','-o',str(worker)],check=True)
+    common = ['-std=c++17','-fobjc-arc','-O2','-arch','arm64','-mmacosx-version-min=13.0','-fmodules-cache-path='+os.environ['CLANG_MODULE_CACHE_PATH']]
+    # The worker source linked with the NTFS implementation built by build.sh.
+    core = APP_PATH.parent/'.cache/NativeNTFSCore.o'
+    subprocess.run(['xcrun','clang++',*common,'-I',str(SOURCE_PATH/'Sources'),'-c',str(harness),'-o',str(run/'state_test.o')],check=True)
+    subprocess.run(['xcrun','swiftc','-target','arm64-apple-macosx13.0',str(run/'state_test.o'),str(core),'-lc++','-framework','Foundation','-framework','IOKit','-o',str(worker)],check=True)
     image = run/'fresh.ntfs';image.touch();os.truncate(image,64*1024*1024)
     request = {'action':'format','target':{'kind':'image','path':str(image),'formatConfirmation':str(image)},'arguments':['STATE-TEST']}
     result = subprocess.run([str(worker)],input=json.dumps(request),text=True,capture_output=True)

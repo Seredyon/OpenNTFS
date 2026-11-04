@@ -23,11 +23,8 @@ call('put',keep,'/Case.bin');before=sha(IMAGE);call('put',keep,'/case.BIN',ok=Fa
 # Relocation proves the worker resolves resources within the app, not the work directory.
 relocated=RUN/'Moved application.app';shutil.copytree(APP,relocated)
 moved=relocated/'Contents/MacOS/NTFSWorker';call('ls','/',worker=moved)
-engine=relocated/'Contents/Frameworks/NTFSEngine.bundle'
-with engine.open('r+b') as f:f.seek(0x1000);b=f.read(1);f.seek(0x1000);f.write(bytes([b[0]^1]))
-before=sha(IMAGE);call('ls','/',ok=False,worker=moved);assert sha(IMAGE)==before
 # Conservative hibernation-file policy is tested last, since it blocks all further writes.
 call('put',keep,'/hiberfil.sys');before=sha(IMAGE);call('mkdir','/blocked',ok=False);assert sha(IMAGE)==before
-report={'timestamp':datetime.datetime.now(datetime.timezone.utc).isoformat(),'passed':True,'checks':len(checks),'run':str(RUN),'disk_full_preserved_existing_data':True,'partial_import_removed':True,'portable_resource_lookup':True,'engine_tamper_rejected':True,'hibernation_file_blocks_writes':True,'operations':checks}
+report={'timestamp':datetime.datetime.now(datetime.timezone.utc).isoformat(),'passed':True,'checks':len(checks),'run':str(RUN),'disk_full_preserved_existing_data':True,'partial_import_removed':True,'portable_resource_lookup':True,'hibernation_file_blocks_writes':True,'operations':checks}
 (REPORTS_PATH/'edge-tests.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
-print('PASS:',len(checks),'checks; disk-full cleanup; case collisions; app relocation; engine integrity; hibernation guard')
+print('PASS:',len(checks),'checks; disk-full cleanup; case collisions; app relocation; hibernation guard')

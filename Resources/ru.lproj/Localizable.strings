@@ -175,11 +175,9 @@
 "The NTFS module stopped (%@). Open the volume again." = "Модуль NTFS завершился (%@). Откройте том повторно.";
 "The NTFSWorker module is missing from the application." = "В приложении отсутствует модуль NTFSWorker.";
 "The NTFS module returned an invalid response." = "Модуль NTFS вернул некорректный ответ.";
-"NTFS engine error during “%@” (%@)." = "Ошибка движка NTFS при операции «%@» (%@).";
 "The NTFS volume state (flags %@) needs to be checked on Windows before writing." = "Перед записью состояние тома NTFS (флаги %@) нужно проверить в Windows.";
 "There is not enough free space on the NTFS volume." = "На томе NTFS недостаточно свободного места.";
 "The file or folder was not found." = "Файл или папка не найдены.";
-"The NTFS engine ran out of memory." = "Движку NTFS не хватило памяти.";
 "The NTFS journal could not be replayed. Connect the drive to Windows and run a disk check." = "Не удалось воспроизвести журнал NTFS. Подключите диск к Windows и выполните проверку диска.";
 
 /* MARK: Названия операций движка */
@@ -203,7 +201,6 @@
 
 /* MARK: Сообщения модуля NTFSWorker */
 "A file or folder with this name already exists" = "Файл или папка с таким именем уже существует";
-"Bundled NTFS engine is missing" = "Встроенный движок NTFS отсутствует";
 "Cannot create authorization channel" = "Не удалось создать канал авторизации";
 "Cannot duplicate authorized descriptor" = "Не удалось продублировать авторизованный дескриптор";
 "Cannot identify the connected USB partition" = "Не удалось определить подключённый USB-раздел";
@@ -214,7 +211,6 @@
 "Cannot use caller permissions" = "Не удалось использовать права вызывающего пользователя";
 "Cannot validate NTFS volume metadata" = "Не удалось проверить метаданные тома NTFS";
 "Directory too large" = "Папка слишком большая";
-"Engine image missing" = "Образ движка не загружен";
 "Executable path too long" = "Слишком длинный путь к исполняемому файлу";
 "File does not exist" = "Файл не существует";
 "Image is in use by another process" = "Образ используется другим процессом";
@@ -245,7 +241,6 @@
 "Missing format confirmation" = "Нет подтверждения форматирования";
 "Missing image" = "Не указан образ";
 "Missing image format confirmation" = "Нет подтверждения форматирования образа";
-"NTFS engine integrity check failed" = "Проверка целостности движка NTFS не пройдена";
 "NTFS is marked dirty (volume flags include 0x0001). A filesystem check is required before writing" = "Том NTFS помечен как «грязный» (флаг 0x0001). Перед записью нужна проверка файловой системы";
 "NTFS is marked dirty. Run a filesystem check before writing" = "Том NTFS помечен как «грязный». Перед записью выполните проверку файловой системы";
 "NTFS metadata integrity check failed" = "Проверка целостности метаданных NTFS не пройдена";
@@ -286,7 +281,6 @@
 "Windows hibernation file detected. Disable hibernation and cleanly shut down Windows before writing" = "Обнаружен файл гибернации Windows. Перед записью отключите гибернацию и полностью завершите работу Windows";
 "diskutil could not complete the operation; the volume may be busy" = "diskutil не смог выполнить операцию; возможно, том занят";
 "transfer requires local path and NTFS path" = "для передачи нужны локальный путь и путь NTFS";
-"usage: engine-cli ENGINE command [image] [arguments]" = "использование: engine-cli ENGINE команда [образ] [аргументы]";
 
 /* MARK: Множественное число (один|несколько|много) */
 "%ld files" = "%ld файл|%ld файла|%ld файлов";
@@ -355,11 +349,9 @@
 "Stage %@ · %@%%" = "Этап %@ · %@%%";
 "The NTFS engine repaired the errors it found, but the volume is still marked. Check it on Windows with chkdsk." = "Движок NTFS исправил найденные ошибки, но отметка на томе осталась. Проверьте его в Windows командой chkdsk.";
 "The NTFS engine repaired the errors it found. You can write to “%@” again." = "Движок NTFS исправил найденные ошибки. На «%@» снова можно записывать.";
-"The NTFS journal contains changes that Windows did not finish. OpenNTFS can complete them, as Windows would on its next start, and clear the mark if the volume is then free of errors." = "В журнале NTFS есть изменения, которые Windows не завершила. OpenNTFS может завершить их, как это сделала бы Windows при следующем запуске, и снять отметку, если после этого ошибок не будет.";
 "The NTFS structures of “%@” are consistent." = "Структуры NTFS на «%@» в порядке.";
 "The NTFS structures of “%@” are consistent. The checker noted minor issues that need no repair." = "Структуры NTFS на «%@» в порядке. Проверка отметила мелкие недочёты, которые не требуют исправления.";
 "The check found errors on “%@”, so the mark was kept and nothing was changed." = "Проверка нашла ошибки на «%@», поэтому отметка оставлена и ничего не изменено.";
-"The check reads the NTFS structures of the whole volume and does not change anything on the drive. It uses the checker built into the NTFS engine. Large drives can take several minutes." = "Проверка читает структуры NTFS всего тома и ничего не меняет на накопителе. Используется проверка, встроенная в движок NTFS. На больших дисках она может занять несколько минут.";
 "The checker finished with an unexpected result. See the report." = "Проверка завершилась с неожиданным результатом. Подробности в отчёте.";
 "The checker found damaged NTFS structures on “%@” (see the report). The most reliable fix is chkdsk on Windows: connect the drive and run chkdsk X: /f (X is the drive letter). You can also repair the volume here." = "Проверка нашла повреждённые структуры NTFS на «%@» (см. отчёт). Надёжнее всего исправить их в Windows: подключите накопитель и выполните chkdsk X: /f (X - буква диска). Также том можно исправить здесь.";
 "The volume cannot be checked" = "Том невозможно проверить";
@@ -375,3 +367,49 @@
 "Check and Clear Mark reads the whole volume once and removes the mark only if no errors are found. It repairs nothing; if there are errors, the volume stays as it is. Large drives can take several minutes." = "«Проверить и снять отметку» читает весь том один раз и снимает отметку, только если ошибок нет. Ничего не исправляется: если ошибки есть, том остаётся как был. На больших дисках это может занять несколько минут.";
 "Unexpected device interface ABI" = "Неожиданный интерфейс устройства в движке NTFS";
 "read volume space" = "чтение свободного места тома";
+"The check reads the NTFS structures of the whole volume and does not change anything on the drive. Large drives can take several minutes." = "Проверка читает структуры NTFS всего тома и ничего не меняет на накопителе. На больших дисках она может занять несколько минут.";
+"Cannot read a directory as a file" = "Папку нельзя прочитать как файл";
+"Directory index is too large" = "Индекс папки слишком большой";
+"Directory is too large" = "В папке слишком много объектов";
+"File not found" = "Файл не найден";
+"File record is not in use" = "Запись файла не используется";
+"Files with hard links in other folders are not removed" = "Файлы с жёсткими ссылками в других папках не удаляются";
+"Invalid UTF-16 name" = "Недопустимое имя (UTF-16)";
+"Invalid path" = "Недопустимый путь";
+"Is a directory" = "Это папка";
+"Links and reparse points are not removed" = "Ссылки и точки повторной обработки не удаляются";
+"MFT reference names an extension record" = "Ссылка указывает на дополнительную запись MFT";
+"Metadata attribute is too large" = "Служебный атрибут слишком большой";
+"Name contains characters Windows does not allow" = "Имя содержит символы, недопустимые в Windows";
+"Name is too long" = "Имя слишком длинное";
+"Nonresident attribute lists are not rewritten" = "Нерезидентные списки атрибутов не перезаписываются";
+"Not a directory" = "Это не папка";
+"Not an NTFS partition" = "Это не раздел NTFS";
+"Only NTFS 3.0 and 3.1 are supported" = "Поддерживаются только NTFS 3.0 и 3.1";
+"Read request exceeds limit" = "Запрос на чтение превышает предел";
+"Relative path components are not accepted" = "Относительные части пути не допускаются";
+"Resident MFT bitmaps are not repaired" = "Резидентная битовая карта MFT не исправляется";
+"Stale NTFS file reference" = "Устаревшая ссылка на файл NTFS";
+"System files cannot be removed" = "Системные файлы нельзя удалить";
+"System files cannot be renamed" = "Системные файлы нельзя переименовать";
+"The MFT record is full" = "Запись MFT заполнена";
+"The folder is not empty" = "Папка не пуста";
+"The free space is too fragmented for this file" = "Свободное место слишком фрагментировано для этого файла";
+"The image is open read-only" = "Образ открыт только для чтения";
+"The source file changed while it was copied" = "Исходный файл изменился во время копирования";
+"The volume is open read-only" = "Том открыт только для чтения";
+"The volume is too small for NTFS" = "Том слишком мал для NTFS";
+"This tool accepts regular partition image files only" = "Поддерживаются только обычные файлы образов разделов";
+"Unexpected end of the NTFS file" = "Неожиданный конец файла NTFS";
+"Unknown NTFS compression format" = "Неизвестный формат сжатия NTFS";
+"Unrepresentable filename" = "Имя файла невозможно представить";
+"Unsupported $SDS layout" = "Неподдерживаемая структура $SDS";
+"Unsupported MFT layout" = "Неподдерживаемая структура MFT";
+"Unsupported NTFS compression unit" = "Неподдерживаемый блок сжатия NTFS";
+"Unsupported NTFS sector or cluster size" = "Неподдерживаемый размер сектора или кластера NTFS";
+"Unsupported cluster size" = "Неподдерживаемый размер кластера";
+"Unsupported directory index" = "Неподдерживаемый индекс папки";
+"Unsupported sector size" = "Неподдерживаемый размер сектора";
+"Windows left unfinished changes in the NTFS journal. Open the drive on Windows and shut down normally before writing" = "Windows оставила незавершённые изменения в журнале NTFS. Перед записью откройте диск в Windows и корректно завершите её работу";
+"Write beyond the file size" = "Запись за пределами размера файла";
+"The NTFS journal contains changes that Windows did not finish. Connect the drive to Windows and shut it down normally; until then OpenNTFS only reads this volume." = "В журнале NTFS есть изменения, которые Windows не завершила. Подключите диск к Windows и корректно завершите её работу; до этого OpenNTFS только читает этот том.";

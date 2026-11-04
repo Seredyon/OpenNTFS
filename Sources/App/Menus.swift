@@ -320,7 +320,7 @@ struct CheckSheet: View {
                 EmptyView()
             }
             if reason == .manual {
-                Text(L("The check reads the NTFS structures of the whole volume and does not change anything on the drive. It uses the checker built into the NTFS engine. Large drives can take several minutes."))
+                Text(L("The check reads the NTFS structures of the whole volume and does not change anything on the drive. Large drives can take several minutes."))
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(L("Check and Clear Mark reads the whole volume once and removes the mark only if no errors are found. It repairs nothing; if there are errors, the volume stays as it is. Large drives can take several minutes."))
@@ -348,7 +348,8 @@ struct CheckResultSheet: View {
 
     private enum Look { case good, attention, bad }
 
-    private var offerClear: Bool { report.mode == .verify && report.noErrors && !report.writable }
+    // Unfinished Windows journal entries can only be completed by Windows itself.
+    private var offerClear: Bool { report.mode == .verify && report.noErrors && report.outcome != .journal && !report.writable }
     private var offerRepair: Bool { report.outcome == .errors }
 
     private var look: Look {
@@ -390,7 +391,7 @@ struct CheckResultSheet: View {
                                                     : L("The NTFS structures of “%@” are consistent.", name)
                 }
                 if report.outcome == .journal {
-                    return L("The NTFS journal contains changes that Windows did not finish. OpenNTFS can complete them, as Windows would on its next start, and clear the mark if the volume is then free of errors.")
+                    return L("The NTFS journal contains changes that Windows did not finish. Connect the drive to Windows and shut it down normally; until then OpenNTFS only reads this volume.")
                 }
                 return L("The volume is only marked as needing a check. To allow writing, OpenNTFS checks it once more and clears the mark only if there are still no errors. Nothing else is changed.")
             case .safe, .repair:

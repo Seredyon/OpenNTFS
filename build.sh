@@ -18,7 +18,7 @@ export CLANG_MODULE_CACHE_PATH="$CACHE_DIR/clang"
 export XDG_CACHE_HOME="$CACHE_DIR"
 export PYTHONDONTWRITEBYTECODE=1
 export COPYFILE_DISABLE=1
-mkdir -p "$TMPDIR" "$CLANG_MODULE_CACHE_PATH" "$OUTPUT_DIR/validation" "$OUTPUT_DIR/generated"
+mkdir -p "$TMPDIR" "$CLANG_MODULE_CACHE_PATH" "$OUTPUT_DIR/validation"
 command -v xcrun >/dev/null || { echo "Xcode Command Line Tools are required."; exit 1; }
 [ "$(uname -m)" = arm64 ] || { echo "Build and test on an Apple silicon Mac."; exit 1; }
 python3 - "$VERSION" "$BUILD_NUMBER" <<'PY'
@@ -30,18 +30,13 @@ if not re.fullmatch(r'[1-9][0-9]*',sys.argv[2]): raise SystemExit('BUILD_NUMBER 
 PY
 python3 "$SOURCE_DIR/scripts/check_localization.py" "$SOURCE_DIR/Sources/App" "$SOURCE_DIR/Resources"
 rm -rf "$APP_DIR"
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Frameworks" "$APP_DIR/Contents/Resources/Temporary"
-python3 "$SOURCE_DIR/scripts/prepare_engine.py" "$SOURCE_DIR/Engine/NTFS_util-9e3e2782" \
-  "$APP_DIR/Contents/Frameworks/NTFSEngine.bundle" "$OUTPUT_DIR/validation/engine-adaptation.json"
-/usr/bin/codesign --force --sign - "$APP_DIR/Contents/Frameworks/NTFSEngine.bundle"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources/Temporary"
 cp -R "$SOURCE_DIR/Resources/"*.lproj "$APP_DIR/Contents/Resources/"
 cp "$SOURCE_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
-python3 - "$OUTPUT_DIR/generated" "$APP_DIR" "$VERSION" "$BUILD_NUMBER" <<'PY'
+python3 - "$APP_DIR" "$VERSION" "$BUILD_NUMBER" <<'PY'
 from pathlib import Path
-import hashlib,plistlib,sys
-headers,app=map(Path,sys.argv[1:3]);version,build=sys.argv[3:5]
-hash_value=hashlib.sha256((app/'Contents/Frameworks/NTFSEngine.bundle').read_bytes()).hexdigest()
-(headers/'EngineHash.h').write_text('#define EXPECTED_ENGINE_SHA256 "'+hash_value+'"\n')
+import plistlib,sys
+app=Path(sys.argv[1]);version,build=sys.argv[2:4]
 info={
  'CFBundleExecutable':'OpenNTFS','CFBundleIdentifier':'local.openntfs.portable',
  'CFBundleName':'OpenNTFS','CFBundleDisplayName':'OpenNTFS','CFBundlePackageType':'APPL',
@@ -55,10 +50,14 @@ info={
 }
 (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
 PY
+xcrun swiftc -swift-version 5 -O -wmo -parse-as-library -target arm64-apple-macosx13.0 \
+  -module-cache-path "$CLANG_MODULE_CACHE_PATH" -module-name NativeNTFSCore \
+  -c "$SOURCE_DIR/Sources/NTFS/"*.swift -o "$CACHE_DIR/NativeNTFSCore.o"
 xcrun clang++ -std=c++17 -fobjc-arc -O2 -arch arm64 -mmacosx-version-min=13.0 \
-  -I"$OUTPUT_DIR/generated" -fmodules-cache-path="$CLANG_MODULE_CACHE_PATH" \
-  "$SOURCE_DIR/Sources/NTFSWorker.mm" -framework Foundation -framework IOKit \
-  -o "$APP_DIR/Contents/MacOS/NTFSWorker"
+  -fmodules-cache-path="$CLANG_MODULE_CACHE_PATH" \
+  -c "$SOURCE_DIR/Sources/NTFSWorker.mm" -o "$CACHE_DIR/NTFSWorker.o"
+xcrun swiftc -target arm64-apple-macosx13.0 "$CACHE_DIR/NTFSWorker.o" "$CACHE_DIR/NativeNTFSCore.o" -lc++ \
+  -framework Foundation -framework IOKit -o "$APP_DIR/Contents/MacOS/NTFSWorker"
 xcrun swiftc -swift-version 5 -O -target arm64-apple-macosx13.0 \
   -module-cache-path "$CLANG_MODULE_CACHE_PATH" -module-name OpenNTFS \
   -framework SwiftUI -framework AppKit -framework IOKit -framework Quartz \

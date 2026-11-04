@@ -2,7 +2,6 @@
 /build/
 /dist/
 /.cache/
-/Sources/EngineHash.h
 *.app/
 *.dmg
 *.dmg.sha256

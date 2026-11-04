@@ -62,7 +62,7 @@ checks['error_rolled_back_pending']=not ({'E1.bin','E2.bin','E4.bin'}&root) and 
 # Duplicate differing only by case inside one batch
 r=send('batch',operations=[{'op':'put','args':[str(files[0]),'/Dup.bin']},{'op':'put','args':[str(files[1]),'/dup.BIN']}])
 checks['case_duplicate_in_batch_rejected']='error' in r and 'Dup.bin' not in names('/')
-# Collisions follow the volume's own $UpCase table (shared with the engine): either the name is
+# Collisions follow the volume's own $UpCase table : either the name is
 # rejected as existing, or both names coexist and each opens to its own content. Never a crash.
 assert send('put',files[0],'/file.txt').get('ok')
 r=send('put',files[1],'/fıle.txt');root=names('/')

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check publishable files without including build output or local Git metadata."""
 from pathlib import Path
-import hashlib,os,sys,unicodedata
+import os,unicodedata
 
 root=Path(__file__).resolve().parents[1]
 errors=[];count=0
@@ -25,10 +25,6 @@ for directory,dirs,files in os.walk(root):
         if path.suffix=='.py':
             try:compile(text,str(relative),'exec')
             except SyntaxError as error:errors.append(f'{relative}: {error}')
-expected='d9a9656b630aae351a3f0ebbfc6f4e3b523d2b9d80f3a982bcab6dd724de41e2'
-engine=root/'Engine/NTFS_util-9e3e2782'
-if not engine.is_file() or hashlib.sha256(engine.read_bytes()).hexdigest()!=expected:
-    errors.append('Engine: missing or unexpected module')
-if (root/'Sources/EngineHash.h').exists():errors.append('EngineHash.h must be generated under the build folder')
+if (root/'Engine').exists():errors.append('Engine: binary modules do not belong in this repository')
 if errors:raise SystemExit('\n'.join(errors))
-print(f'PASS: {count} repository files, engine checksum, Python syntax and text hygiene')
+print(f'PASS: {count} repository files, Python syntax and text hygiene')

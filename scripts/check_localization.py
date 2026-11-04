@@ -30,6 +30,20 @@ def swift_keys(folder):
             plurals.add(unescape(m.group(2)))
     return keys, plurals
 
+# Native NTFS messages that reach the user carry a specific errno; internal structure checks
+# (EIO) stay technical and are not translated.
+USER_CODES = 'ENOSPC|EEXIST|ENOENT|ENOTEMPTY|EROFS|EPERM|ENOTDIR|EISDIR|EINVAL|ENAMETOOLONG|ENOTSUP|EBUSY|EFBIG|E2BIG|ESTALE|EILSEQ'
+
+
+def native_keys(folder):
+    keys = set()
+    for f in sorted(Path(folder).glob('*.swift')):
+        for m in re.finditer(r'NTFSError\(\s*' + LIT + r'\s*,\s*code:\s*(' + USER_CODES + r')\b', f.read_text()):
+            if '\\(' not in m.group(1):
+                keys.add(unescape(m.group(1)))
+    return keys
+
+
 def worker_keys(path):
     text = Path(path).read_text(); keys = set()
     for m in re.finditer(r'runtime_error\(\s*' + LIT + r'\s*\)', text): keys.add(unescape(m.group(1)))
@@ -54,6 +68,10 @@ def main():
     swift_dir, resources = Path(sys.argv[1]), Path(sys.argv[2])
     keys, plurals = swift_keys(swift_dir)
     keys |= worker_keys(swift_dir.parent / 'NTFSWorker.mm')
+    native_session = swift_dir.parent / 'NativeSession.h'
+    if native_session.exists():
+        keys |= worker_keys(native_session)
+    keys |= native_keys(swift_dir.parent / 'NTFS')
     errors = []
     for lproj in sorted(resources.glob('*.lproj')):
         if lproj.name == 'en.lproj': continue

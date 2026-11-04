@@ -120,22 +120,8 @@ final class AppSettings: ObservableObject {
 
 /// Converts worker and engine messages (always English) into the interface language.
 enum ErrorText {
-    private static let ufsdCodes: [String: String] = [
-        "0xa0001023": LK("There is not enough free space on the NTFS volume."),
-        "0xa000100f": LK("A file or folder with this name already exists"),
-        "0xa000100e": LK("The file or folder was not found."),
-        "0xa0001007": LK("The NTFS engine ran out of memory."),
-        "0xa000102b": LK("The NTFS journal could not be replayed. Connect the drive to Windows and run a disk check."),
-    ]
-
     static func localize(_ message: String) -> String {
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let range = text.range(of: ": UFSD ") {
-            let operation = String(text[..<range.lowerBound])
-            let code = String(text[range.upperBound...]).lowercased()
-            if let known = ufsdCodes[code] { return L(known) }
-            return L("NTFS engine error during “%@” (%@).", L(operation), code)
-        }
         if text.hasPrefix("NTFS volume flags "), text.hasSuffix(" require further checking before writing") {
             let flags = text.dropFirst("NTFS volume flags ".count).prefix(while: { $0 != " " })
             return L("The NTFS volume state (flags %@) needs to be checked on Windows before writing.", String(flags))
