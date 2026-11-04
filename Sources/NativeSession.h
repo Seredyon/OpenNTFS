@@ -106,6 +106,12 @@ class Session{
  void mkdir(const char*path){message[0]=0;check(ntfs_mkdir(h,path,message,sizeof message));}
  void rename(const char*a,const char*b){message[0]=0;check(ntfs_rename(h,a,b,message,sizeof message));}
  void remove(const char*path,bool directory){message[0]=0;check(ntfs_remove(h,path,directory?1:0,message,sizeof message));}
+ bool freeBytes(uint64_t&bytes){
+  if(currentTarget&&[freeKnownFor isEqual:currentTarget]){bytes=freeKnownBytes;return true;}
+  if(ntfs_free_bytes(h,&bytes))return false;
+  if(currentTarget){freeKnownFor=currentTarget;freeKnownBytes=bytes;}
+  return true;
+ }
  // A file that cannot fit is refused before anything is allocated.
  void requireSpace(uint64_t bytes){
   uint64_t free=0;if(ntfs_free_bytes(h,&free))return;
@@ -159,5 +165,8 @@ class Session{
   }catch(...){struct stat now{};if(!writing&&!lstat(local,&now)&&now.st_dev==localInfo.st_dev&&now.st_ino==localInfo.st_ino)unlink(local);throw;}
  }
  // Commit followed by a full device barrier (see syncDevice).
- void flush(){message[0]=0;check(ntfs_flush(h,message,sizeof message));syncDevice(resourceFD);}
+ void flush(){
+  message[0]=0;check(ntfs_flush(h,message,sizeof message));syncDevice(resourceFD);
+  uint64_t free=0;if(currentTarget&&ntfs_free_bytes(h,&free)==0){freeKnownFor=currentTarget;freeKnownBytes=free;}
+ }
 };

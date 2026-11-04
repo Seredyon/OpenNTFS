@@ -135,6 +135,14 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
     private var toastTask: DispatchWorkItem?
 
     var target: Target? { targets.first { $0.id == targetID } }
+    @Published private(set) var freeSpace: [String: Int64] = [:]
+
+    /// Used and total size once the volume was opened here; a closed volume can only show its size.
+    func capacityText(_ t: Target) -> String {
+        guard let free = freeSpace[t.spaceKey] else { return t.sizeText }
+        return L("%@ of %@", ByteCountFormatter.string(fromByteCount: max(0, t.size - free), countStyle: .file), t.sizeText)
+    }
+
     private struct PreviewCopy { let size: UInt64; let modified: UInt64; let url: URL }
     private var previewCopies: [String: PreviewCopy] = [:]
 
@@ -214,6 +222,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
         if busy { deviceRefreshPending = true; return }
         let previous = target
         withAnimation(.easeInOut(duration: 0.2)) { targets = targets.filter(\.isImage) + found }
+        freeSpace = freeSpace.filter { key, _ in targets.contains { $0.spaceKey == key } }
         if let current = previous, !current.isImage {
             if let match = found.first(where: current.sameDevice) {
                 targetID = match.id
@@ -260,6 +269,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
     func removeImage(_ t: Target) {
         guard t.isImage, !busy else { return }
         if targetID == t.id { closeBrowser(); targetID = nil }
+        freeSpace[t.spaceKey] = nil
         withAnimation { targets.removeAll { $0.id == t.id } }
     }
 
@@ -301,6 +311,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
         }) { result in
             switch result {
             case .success:
+                self.freeSpace[t.spaceKey] = nil
                 self.closeBrowser(); self.targetID = nil
                 self.showToast("eject", L("“%@” can be safely disconnected.", t.name))
                 self.refreshDevices()
@@ -343,6 +354,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
             case .success:
                 self.closeBrowser()
                 if t.isImage, let i = self.targets.firstIndex(where: { $0.id == t.id }) { self.targets[i].fileSystem = "ntfs" }
+                self.freeSpace[t.spaceKey] = nil
                 self.showToast("checkmark.circle", L("Formatting finished."))
                 if !t.isImage { self.refreshDevices() }
             case .failure(let error): self.show(error)
@@ -352,12 +364,17 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
 
     // MARK: Navigation
 
-    func go(to destination: String, history: Bool = true, resetHistory: Bool = false, select: String? = nil) {
+    func go(to destination: String, history: Bool = true, resetHistory: Bool = false, select: String? = nil, measure: Bool = false) {
         guard let t = target, !busy else { return }
         let origin = path, wasOpened = opened
-        run(opened ? L("Reading folder…") : L("Opening “%@”…", t.name), work: { _ in try Worker.list(t, destination) }) { result in
+        let recount = resetHistory || !wasOpened, needsSpace = measure || recount
+        run(opened ? L("Reading folder…") : L("Opening “%@”…", t.name), work: { _ -> ([Entry], Int64?) in
+            let list = try Worker.list(t, destination)
+            return (list, needsSpace ? Worker.freeBytes(t, recount: recount) : nil)
+        }) { result in
             switch result {
-            case .success(let list):
+            case .success(let (list, free)):
+                if let free { self.freeSpace[t.spaceKey] = free }
                 if resetHistory { self.backStack = []; self.forwardStack = [] }
                 else if history && wasOpened && origin != destination { self.backStack.append(origin); self.forwardStack = [] }
                 if destination != origin || resetHistory { self.search = "" }
@@ -373,7 +390,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
         }
     }
 
-    func reload(select: String? = nil) { if opened { go(to: path, history: false, select: select) } }
+    func reload(select: String? = nil) { if opened { go(to: path, history: false, select: select, measure: true) } }
     func back() { guard let previous = backStack.last, canBrowse else { return }; backStack.removeLast(); forwardStack.append(path); go(to: previous, history: false) }
     func forward() { guard let next = forwardStack.last, canBrowse else { return }; forwardStack.removeLast(); backStack.append(path); go(to: next, history: false) }
     func up() { guard path != "/", canBrowse else { return }; go(to: NTFSPath.parent(path), select: (path as NSString).lastPathComponent) }

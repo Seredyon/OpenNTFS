@@ -99,7 +99,7 @@ struct TargetRow: View {
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(target.name).lineLimit(1)
-                Text(target.isImage ? target.sizeText : target.fileSystemText + " · " + target.sizeText)
+                Text(target.isImage ? model.capacityText(target) : target.fileSystemText + " · " + model.capacityText(target))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -532,7 +532,7 @@ struct StatusBar: View {
             Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
             if let t = model.target {
-                Label(t.isImage ? L("Disk image") + " · " + t.sizeText : t.id + " · " + t.fileSystemText + " · " + t.sizeText,
+                Label(t.isImage ? L("Disk image") + " · " + model.capacityText(t) : t.id + " · " + t.fileSystemText + " · " + model.capacityText(t),
                       systemImage: t.isImage ? "opticaldiscdrive" : "externaldrive")
                     .labelStyle(.titleAndIcon).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }

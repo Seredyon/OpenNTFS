@@ -436,11 +436,19 @@ final class BitmapStream {
     var bits: [UInt8]
     let count: UInt64
     private(set) var dirty = IndexSet()
+    /// Set bits below `count`: counted once here and kept up to date by `set`, because a large
+    /// volume's bitmap is too long to count for every file.
+    private var used = 0
 
     init(bytes: [UInt8], count: UInt64) {
         bits = bytes
         self.count = count
+        let whole = min(Int(count / 8), bytes.count)
+        for index in 0..<whole { used += bytes[index].nonzeroBitCount }
+        if count % 8 != 0, whole < bytes.count { used += (bytes[whole] & UInt8((1 << (count % 8)) - 1)).nonzeroBitCount }
     }
+
+    var freeCount: UInt64 { count - min(UInt64(max(used, 0)), count) }
 
     func isSet(_ index: UInt64) -> Bool { bits[Int(index >> 3)] & (1 << (index & 7)) != 0 }
 
@@ -449,10 +457,13 @@ final class BitmapStream {
         while i < start + length {
             let byte = Int(i >> 3)
             if i & 7 == 0, start + length - i >= 8 {
+                used += (value ? 8 : 0) - bits[byte].nonzeroBitCount
                 bits[byte] = value ? 0xff : 0
                 i += 8
             } else {
-                if value { bits[byte] |= 1 << (i & 7) } else { bits[byte] &= ~(1 << (i & 7)) }
+                let mask: UInt8 = 1 << (i & 7)
+                if (bits[byte] & mask != 0) != value { used += value ? 1 : -1 }
+                if value { bits[byte] |= mask } else { bits[byte] &= ~mask }
                 i += 1
             }
             dirty.insert(byte)
@@ -674,16 +685,7 @@ final class NTFSWriter {
         try writeBitmapChanges(recordBitmap, stream: try volume.record(0).attribute(NTFSType.bitmap), residentIn: 0)
     }
 
-    var freeClusters: UInt64 {
-        let count = clusterBitmap.count
-        var used: UInt64 = 0
-        for (index, byte) in clusterBitmap.bits.prefix(Int((count + 7) / 8)).enumerated() {
-            var value = byte
-            if UInt64(index) == count / 8, count % 8 != 0 { value &= UInt8((1 << (count % 8)) - 1) }
-            used += UInt64(value.nonzeroBitCount)
-        }
-        return count - min(used, count)
-    }
+    var freeClusters: UInt64 { clusterBitmap.freeCount }
 
     /// Allocates `count` clusters, as few runs as possible, preferring space outside the MFT zone.
     func allocateClusters(_ count: UInt64, near: UInt64? = nil) throws -> [NTFSRun] {

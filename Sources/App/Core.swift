@@ -116,6 +116,8 @@ struct Target: Identifiable {
         return (metadata["bus"] as? String) == "Secure Digital" ? "sdcard.fill" : "externaldrive.fill"
     }
     var parentDisk: String? { metadata["parent"] as? String }
+    /// Device names are reused by the next drive; the identity is not.
+    var spaceKey: String { metadata["identity"] as? String ?? id }
     var detail: String {
         isImage ? L("NTFS image") + " · " + sizeText : fileSystemText + " · " + sizeText + " · " + id
     }
@@ -392,6 +394,12 @@ enum Worker {
     static func list(_ target: Target, _ path: String) throws -> [Entry] {
         struct Listing: Decodable { let entries: [Entry] }
         return try JSONDecoder().decode(Listing.self, from: invoke("ls", target: target, arguments: [path])).entries
+    }
+
+    /// The worker counts the volume's $Bitmap on `recount`, when a volume opens, and keeps the result.
+    static func freeBytes(_ target: Target, recount: Bool) -> Int64? {
+        guard let data = try? invoke(recount ? "recount" : "health", target: target, arguments: []) else { return nil }
+        return (object(data)["freeBytes"] as? NSNumber)?.int64Value
     }
 
     static func object(_ data: Data) -> [String: Any] {
