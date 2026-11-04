@@ -158,6 +158,10 @@
 "Menus provided by macOS switch after OpenNTFS restarts." = "Системные меню macOS переключатся после перезапуска OpenNTFS.";
 "Restart Now" = "Перезапустить";
 "Show hidden and system items" = "Показывать скрытые и системные объекты";
+"Count the size of folders" = "Считать размер папок";
+"Folders on screen are counted one at a time and remembered until you quit. On a large hard drive this keeps the disk busy." = "Папки на экране считаются по одной, результат хранится до выхода из приложения. На большом жёстком диске это надолго займёт диск.";
+"Counting folders…" = "Подсчёт папок…";
+"The folder tree is too deep" = "Слишком большая вложенность папок";
 "Double-clicking a file" = "Двойной щелчок по файлу";
 "Show actions menu" = "Показать меню действий";
 "Open with default app" = "Открыть в программе по умолчанию";

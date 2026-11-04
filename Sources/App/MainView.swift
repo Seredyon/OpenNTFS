@@ -26,6 +26,7 @@ struct RootView: View {
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in model.refreshDevices() }
         .onChange(of: model.busy) { busy in NSApp.windows.forEach { $0.standardWindowButton(.closeButton)?.isEnabled = !busy } }
         .onChange(of: settings.showHiddenItems) { _ in model.refilter() }
+        .onChange(of: settings.countFolderSizes) { _ in model.folderCountingChanged() }
     }
 }
 
@@ -498,8 +499,8 @@ struct FileTable: View {
                 Text(entry.dateLabel).foregroundStyle(.secondary)
             }
             .width(min: 120, ideal: 150)
-            TableColumn(L("Size"), value: \Entry.size) { entry in
-                Text(entry.sizeLabel).foregroundStyle(.secondary).monospacedDigit()
+            TableColumn(L("Size"), value: \Entry.sortSize) { entry in
+                Text(model.isCounting(entry) ? "…" : entry.sizeLabel).foregroundStyle(.secondary).monospacedDigit()
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .width(min: 64, ideal: 80)
@@ -569,6 +570,10 @@ struct StatusBar: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            if model.isCountingFolders {
+                ProgressView().controlSize(.mini)
+                Text(L("Counting folders…")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
             Spacer()
             if let t = model.target {
                 if let used = model.usedFraction(t) {
@@ -591,7 +596,7 @@ struct StatusBar: View {
             if model.hiddenCount > 0 { text += " · " + LP(model.hiddenCount, "%ld hidden", "%ld hidden") }
             return text
         }
-        let bytes = selected.filter { !$0.directory }.reduce(UInt64(0)) { $0 + $1.size }
+        let bytes = selected.reduce(UInt64(0)) { $0 + $1.sortSize }
         var text = L("%@ of %@ selected", String(selected.count), String(model.visible.count))
         if bytes > 0 { text += " · " + ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file) }
         return text

@@ -213,6 +213,9 @@ struct SettingsView: View {
 
             Form {
                 Toggle(L("Show hidden and system items"), isOn: $settings.showHiddenItems)
+                Toggle(L("Count the size of folders"), isOn: $settings.countFolderSizes)
+                Text(L("Folders on screen are counted one at a time and remembered until you quit. On a large hard drive this keeps the disk busy."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Picker(L("Double-clicking a file"), selection: $settings.doubleClickAction) {
                     ForEach(DoubleClickAction.allCases) { Text($0.title).tag($0) }
                 }

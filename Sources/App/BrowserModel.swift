@@ -155,6 +155,86 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
 
     private func byteText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
 
+    /// Totals counted in this session, by volume and path. A count also keeps every folder inside
+    /// the counted one, so opening one of them shows its folders at once.
+    private var folderSizes: [String: UInt64] = [:]
+    private var unreadableFolders = Set<String>()
+    private var countingNow = false
+    private let backgroundCount = BackgroundCount()
+    @Published private(set) var pendingFolders = Set<String>()
+
+    var isCountingFolders: Bool { !pendingFolders.isEmpty }
+    func isCounting(_ entry: Entry) -> Bool { entry.isFolder && pendingFolders.contains(NTFSPath.join(path, entry.name)) }
+
+    private func folderKey(_ t: Target, _ folder: String) -> String { t.spaceKey + "|" + folder }
+
+    func folderCountingChanged() {
+        if !settings.countFolderSizes { stopCounting() }
+        refilter()
+    }
+
+    private func applyFolderSizes() {
+        guard let t = target else { return }
+        for index in entries.indices where entries[index].isFolder {
+            let total = settings.countFolderSizes ? folderSizes[folderKey(t, NTFSPath.join(path, entries[index].name))] : nil
+            if entries[index].folderBytes != total { entries[index].folderBytes = total }
+        }
+    }
+
+    /// Counts the folders on screen one request at a time. Whatever the user starts stops the count
+    /// (see `run`), and it continues afterwards with the folders that are then on screen.
+    private func countNextFolder() {
+        guard settings.countFolderSizes, opened, let t = target else {
+            if !pendingFolders.isEmpty { pendingFolders = [] }
+            return
+        }
+        let waiting = visible.filter { $0.isFolder && $0.folderBytes == nil }.map { NTFSPath.join(path, $0.name) }
+            .filter { !unreadableFolders.contains(folderKey(t, $0)) }
+        if pendingFolders != Set(waiting) { pendingFolders = Set(waiting) }
+        guard !busy, !countingNow, let next = waiting.first else { return }
+        countingNow = true
+        let count = backgroundCount
+        queue.async {
+            let result = Result { try count.run { try Worker.folderSizes(t, next) } }
+            DispatchQueue.main.async {
+                self.countingNow = false
+                switch result {
+                case .success(let totals): for (folder, bytes) in totals { self.folderSizes[self.folderKey(t, folder)] = bytes }
+                case .failure(let error): if !(error is CancelledFailure) { self.unreadableFolders.insert(self.folderKey(t, next)) }
+                }
+                self.refilter()
+            }
+        }
+    }
+
+    /// The signal is repeated because the count may still be on its way to the worker.
+    private func stopCounting() {
+        guard countingNow else { return }
+        backgroundCount.stop()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.stopCounting() }
+    }
+
+    /// A change in `folder` changes its total and those above it; folders beside it keep theirs.
+    private func forgetFolderSizes(around folder: String, listing: [Entry], on t: Target) {
+        var ancestor = folder
+        while true {
+            folderSizes[folderKey(t, ancestor)] = nil
+            if ancestor == "/" { break }
+            ancestor = NTFSPath.parent(ancestor)
+        }
+        let names = Set(listing.filter(\.directory).map(\.name)), prefix = folderKey(t, NTFSPath.join(folder, ""))
+        folderSizes = folderSizes.filter { key, _ in
+            guard key.hasPrefix(prefix), let child = key.dropFirst(prefix.count).split(separator: "/").first else { return true }
+            return names.contains(String(child))
+        }
+    }
+
+    private func forgetFolderSizes(of t: Target) {
+        let prefix = t.spaceKey + "|"
+        folderSizes = folderSizes.filter { !$0.key.hasPrefix(prefix) }
+        unreadableFolders = unreadableFolders.filter { !$0.hasPrefix(prefix) }
+    }
+
     private struct PreviewCopy { let size: UInt64; let modified: UInt64; let url: URL }
     private var previewCopies: [String: PreviewCopy] = [:]
 
@@ -169,6 +249,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
     func run<T>(_ title: String, cancellable: Bool = false, work: @escaping (OperationContext) throws -> T,
                 done: @escaping (Result<T, Error>) -> Void) {
         guard activity == nil else { return }
+        stopCounting()
         let ctx = OperationContext { [weak self] detail, fraction in
             guard let self = self, var a = self.activity else { return }
             if let detail = detail { a.detail = detail }
@@ -188,6 +269,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
                     self.sheet = .check(t, .markedDuringWrite)
                 }
                 if self.deviceRefreshPending { self.deviceRefreshPending = false; self.refreshDevices() }
+                self.countNextFolder()
             }
         }
     }
@@ -235,6 +317,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
         let previous = target
         withAnimation(.easeInOut(duration: 0.2)) { targets = targets.filter(\.isImage) + found }
         freeSpace = freeSpace.filter { key, _ in targets.contains { $0.spaceKey == key } }
+        folderSizes = folderSizes.filter { key, _ in targets.contains { key.hasPrefix($0.spaceKey + "|") } }
         if let current = previous, !current.isImage {
             if let match = found.first(where: current.sameDevice) {
                 targetID = match.id
@@ -255,6 +338,8 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
     }
 
     private func closeBrowser() {
+        stopCounting()
+        pendingFolders = []
         discardPreviewCopies()
         MountGuard.shared.release()
         opened = false; entries = []; visible = []; selection = []; path = "/"; search = ""
@@ -282,6 +367,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
         guard t.isImage, !busy else { return }
         if targetID == t.id { closeBrowser(); targetID = nil }
         freeSpace[t.spaceKey] = nil
+        forgetFolderSizes(of: t)
         withAnimation { targets.removeAll { $0.id == t.id } }
     }
 
@@ -324,6 +410,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
             switch result {
             case .success:
                 self.freeSpace[t.spaceKey] = nil
+                self.forgetFolderSizes(of: t)
                 self.closeBrowser(); self.targetID = nil
                 self.showToast("eject", L("“%@” can be safely disconnected.", t.name))
                 self.refreshDevices()
@@ -352,6 +439,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
             if !self.opened && !t.isImage { MountGuard.shared.release() }
             switch result {
             case .success(let report):
+                if mode != .verify { self.forgetFolderSizes(of: t) }
                 if mode != .verify && report.writable && self.opened && self.targetID == t.id { self.reload() }
                 // Let the previous sheet finish closing before the result appears.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.sheet = .checkResult(t, report) }
@@ -367,6 +455,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
                 self.closeBrowser()
                 if t.isImage, let i = self.targets.firstIndex(where: { $0.id == t.id }) { self.targets[i].fileSystem = "ntfs" }
                 self.freeSpace[t.spaceKey] = nil
+                self.forgetFolderSizes(of: t)
                 self.showToast("checkmark.circle", L("Formatting finished."))
                 if !t.isImage { self.refreshDevices() }
             case .failure(let error): self.show(error)
@@ -387,6 +476,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
             switch result {
             case .success(let (list, free)):
                 if let free { self.freeSpace[t.spaceKey] = free }
+                if measure { self.forgetFolderSizes(around: destination, listing: list, on: t) }
                 if resetHistory { self.backStack = []; self.forwardStack = [] }
                 else if history && wasOpened && origin != destination { self.backStack.append(origin); self.forwardStack = [] }
                 if destination != origin || resetHistory { self.search = "" }
@@ -409,6 +499,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
     func enter(_ entry: Entry) { if entry.isFolder { go(to: NTFSPath.join(path, entry.name)) } }
 
     func refilter() {
+        applyFolderSizes()
         var list = entries
         if !settings.showHiddenItems { list = list.filter { !$0.isHidden && !$0.isSystem } }
         let query = search.trimmingCharacters(in: .whitespaces)
@@ -416,6 +507,7 @@ func executePlanned(_ ops: [PlannedOp], target t: Target, ctx: OperationContext,
         list.sort(using: sortOrder)
         let folders = list.filter(\.directory), files = list.filter { !$0.directory }
         visible = folders + files
+        countNextFolder()
     }
 
     // MARK: Primary actions

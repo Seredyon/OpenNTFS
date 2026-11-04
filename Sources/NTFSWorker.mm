@@ -136,6 +136,12 @@ static int runOperation(int argc,char**argv){@autoreleasepool{
   auto done=[&](NSDictionary*d){if(mutating&&volumeLeftDirty(s)){NSMutableDictionary*m=[d mutableCopy];m[@"volumeMarkedDirty"]=@YES;d=m;}json(d);};
   if(cmd=="health"){NSMutableDictionary*report=[@{@"flags":@(volumeFlags),@"flagsHex":[NSString stringWithFormat:@"0x%04x",volumeFlags],@"engineState":@(s.volumeState()),@"journalRecoveryNeeded":@(s.journalRecoveryNeeded()),@"readOnlyCheck":@YES} mutableCopy];uint64_t free=0;if(s.freeBytes(free))report[@"freeBytes"]=@(free);json(report);}
   else if(cmd=="ls"){s.verifyPath([NSString stringWithUTF8String:argv[3]],true,true);json(@{@"entries":s.list(argv[3])});}
+  else if(cmd=="foldersize"){
+   NSString*folder=[NSString stringWithUTF8String:argv[3]];s.verifyPath(folder,true,true);
+   NSMutableDictionary*folders=[NSMutableDictionary new];uint64_t total=s.folderSize(folder,folders);
+   // A reply has to fit one line of the app's pipe: a very large tree reports the folder alone.
+   json(@{@"ok":@YES,@"bytes":@(total),@"folders":folders.count>300000?@{folder:@(total)}:folders});
+  }
   else if(cmd=="put"||cmd=="get"){
    if(argc!=5)throw std::runtime_error("transfer requires local path and NTFS path");
    NSString*remote=[NSString stringWithUTF8String:argv[4]];uint64_t n=0;
@@ -356,7 +362,7 @@ static int processRequest(NSData*data,const char*executable){@autoreleasepool{
   if(![object isKindOfClass:NSDictionary.class])throw std::runtime_error("Invalid request");
   NSDictionary*r=object;NSString*action=r[@"action"];NSDictionary*t=r[@"target"];NSArray*args=r[@"arguments"]?:@[];
   progressEnabled=streaming&&[r[@"progress"] isEqual:@YES];
-  NSDictionary*counts=@{@"ls":@1,@"put":@2,@"get":@2,@"mkdir":@1,@"rename":@2,@"remove":@1,@"rmdir":@1,@"format":@1,@"inspect":@0,@"release":@0,@"health":@0,@"recount":@0,@"fixsec":@1,@"batch":@0,@"check":@1};
+  NSDictionary*counts=@{@"ls":@1,@"put":@2,@"get":@2,@"mkdir":@1,@"rename":@2,@"remove":@1,@"rmdir":@1,@"format":@1,@"inspect":@0,@"release":@0,@"health":@0,@"recount":@0,@"foldersize":@1,@"fixsec":@1,@"batch":@0,@"check":@1};
   if(![action isKindOfClass:NSString.class]||!counts[action]||![args isKindOfClass:NSArray.class]||args.count!=[counts[action] unsignedIntegerValue]||![t isKindOfClass:NSDictionary.class])throw std::runtime_error("Invalid operation");
   for(id arg in args)if(![arg isKindOfClass:NSString.class]||[(NSString*)arg length]>4096||[(NSString*)arg rangeOfString:[NSString stringWithFormat:@"%C",(unichar)0]].location!=NSNotFound)throw std::runtime_error("Invalid operation argument");
   if([action isEqual:@"release"]){releaseCached();json(@{@"ok":@YES});return 0;}
@@ -374,7 +380,7 @@ static int processRequest(NSData*data,const char*executable){@autoreleasepool{
   }
   bool checking=[action isEqualToString:@"check"];NSString*checkMode=checking?args[0]:nil;
   if(checking&&![@[@"verify",@"safe",@"repair"] containsObject:checkMode])throw std::runtime_error("Invalid operation");
-  bool mutating=operations?batchMutating:checking?![checkMode isEqual:@"verify"]:![@[@"ls",@"get",@"health"] containsObject:action];bool formatting=[action isEqualToString:@"format"];
+  bool mutating=operations?batchMutating:checking?![checkMode isEqual:@"verify"]:![@[@"ls",@"get",@"health",@"foldersize"] containsObject:action];bool formatting=[action isEqualToString:@"format"];
   if(mutating)freeKnownFor=nil;
   NSString*path=nil;bool validated=false;bool volume=[t[@"kind"] isEqual:@"volume"];
   if([action isEqual:@"inspect"]){if(!volume)throw std::runtime_error("Inspect requires a USB partition");NSDictionary*d=validateVolume(t,false);json(@{@"ok":@YES,@"device":d[@"DeviceIdentifier"]});return 0;}

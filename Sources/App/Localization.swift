@@ -104,6 +104,9 @@ final class AppSettings: ObservableObject {
     @Published var showHiddenItems: Bool {
         didSet { defaults.set(showHiddenItems, forKey: "ShowHiddenItems") }
     }
+    @Published var countFolderSizes: Bool {
+        didSet { defaults.set(countFolderSizes, forKey: "CountFolderSizes") }
+    }
     @Published var skipMacMetadata: Bool {
         didSet { defaults.set(skipMacMetadata, forKey: "SkipMacMetadata") }
     }
@@ -113,6 +116,7 @@ final class AppSettings: ObservableObject {
 
     private init() {
         showHiddenItems = defaults.object(forKey: "ShowHiddenItems") as? Bool ?? false
+        countFolderSizes = defaults.object(forKey: "CountFolderSizes") as? Bool ?? false
         skipMacMetadata = defaults.object(forKey: "SkipMacMetadata") as? Bool ?? true
         doubleClickAction = DoubleClickAction(rawValue: defaults.string(forKey: "DoubleClickAction") ?? "") ?? .menu
     }

@@ -106,6 +106,23 @@ class Session{
  void mkdir(const char*path){message[0]=0;check(ntfs_mkdir(h,path,message,sizeof message));}
  void rename(const char*a,const char*b){message[0]=0;check(ntfs_rename(h,a,b,message,sizeof message));}
  void remove(const char*path,bool directory){message[0]=0;check(ntfs_remove(h,path,directory?1:0,message,sizeof message));}
+ // Total of a folder from the directory indexes, which hold the size of every file, so no file
+ // record is read. Links are not followed. `folders` receives the total of each folder by path.
+ uint64_t folderSize(NSString*path,NSMutableDictionary*folders,int depth=0){
+  throwIfCancelled();
+  if(depth>512)throw std::runtime_error("The folder tree is too deep");
+  uint64_t total=0;
+  @autoreleasepool{
+   for(NSDictionary*entry in list(path.UTF8String)){
+    if(![entry[@"directory"] boolValue]){total+=[entry[@"size"] unsignedLongLongValue];continue;}
+    if([entry[@"attributes"] unsignedIntValue]&0x400)continue;
+    NSString*child=[[path isEqual:@"/"]?@"/":[path stringByAppendingString:@"/"] stringByAppendingString:entry[@"name"]];
+    total+=folderSize(child,folders,depth+1);
+   }
+  }
+  folders[path]=@(total);
+  return total;
+ }
  bool freeBytes(uint64_t&bytes){
   if(currentTarget&&[freeKnownFor isEqual:currentTarget]){bytes=freeKnownBytes;return true;}
   if(ntfs_free_bytes(h,&bytes))return false;

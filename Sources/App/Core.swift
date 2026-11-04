@@ -190,6 +190,8 @@ struct Entry: Identifiable, Hashable, Decodable {
     let id: String
     let date: Date
     let fileExtension: String
+    /// A folder's total once it was counted (see BrowserModel); the index stores none.
+    var folderBytes: UInt64?
 
     enum CodingKeys: String, CodingKey { case fileID, name, size, directory, attributes, modifiedNTFS }
 
@@ -212,7 +214,10 @@ struct Entry: Identifiable, Hashable, Decodable {
     var isReadOnly: Bool { attributes & 0x1 != 0 }
     var isFolder: Bool { directory && !isLink }
     var isRegularFile: Bool { !directory && !isLink }
-    var sizeLabel: String { directory ? "-" : ByteCountFormatter.string(fromByteCount: Int64(clamping: size), countStyle: .file) }
+    var sortSize: UInt64 { folderBytes ?? size }
+    var sizeLabel: String {
+        directory && folderBytes == nil ? "-" : ByteCountFormatter.string(fromByteCount: Int64(clamping: sortSize), countStyle: .file)
+    }
     var dateLabel: String { Formatters.date(date) }
     var kind: String { KindCache.kind(for: self) }
 
@@ -224,7 +229,9 @@ struct Entry: Identifiable, Hashable, Decodable {
         return names
     }
 
-    static func == (a: Entry, b: Entry) -> Bool { a.id == b.id && a.size == b.size && a.modifiedNTFS == b.modifiedNTFS }
+    static func == (a: Entry, b: Entry) -> Bool {
+        a.id == b.id && a.size == b.size && a.modifiedNTFS == b.modifiedNTFS && a.folderBytes == b.folderBytes
+    }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
@@ -336,8 +343,27 @@ final class WorkerConnection {
     }
 
     func close() {
+        cancelCurrent()   // a folder count must not hold up quitting
         lock.lock(); defer { lock.unlock() }
         try? input?.close(); input = nil; output = nil; process = nil; pending = Data()
+    }
+}
+
+/// A folder count is the only request that runs on its own. `stop` reaches the worker only while
+/// a count runs, so it can never cancel an operation the user started.
+final class BackgroundCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var running = false
+
+    func run<T>(_ work: () throws -> T) rethrows -> T {
+        lock.lock(); running = true; lock.unlock()
+        defer { lock.lock(); running = false; lock.unlock() }
+        return try work()
+    }
+
+    func stop() {
+        lock.lock(); defer { lock.unlock() }
+        if running { WorkerConnection.shared.cancelCurrent() }
     }
 }
 
@@ -394,6 +420,12 @@ enum Worker {
     static func list(_ target: Target, _ path: String) throws -> [Entry] {
         struct Listing: Decodable { let entries: [Entry] }
         return try JSONDecoder().decode(Listing.self, from: invoke("ls", target: target, arguments: [path])).entries
+    }
+
+    /// Totals of a folder and of every folder inside it, by path.
+    static func folderSizes(_ target: Target, _ path: String) throws -> [String: UInt64] {
+        let folders = object(try invoke("foldersize", target: target, arguments: [path]))["folders"] as? [String: NSNumber]
+        return (folders ?? [:]).mapValues(\.uint64Value)
     }
 
     /// The worker counts the volume's $Bitmap on `recount`, when a volume opens, and keeps the result.
